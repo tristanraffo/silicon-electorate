@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from scv.ballots import WeakOrder, from_scores
+from scv.nulls import spatial_1d
 from scv.rules import Profile
 
 
@@ -38,12 +39,5 @@ def random_weak_profile(
 
 
 def single_peaked_profile(rng: np.random.Generator, n: int, m: int) -> Profile:
-    """1-D spatial electorate: strict ballots by distance to candidates on a line."""
-    candidates = [chr(ord("A") + i) for i in range(m)]
-    positions = rng.uniform(0, 1, size=m)
-    voters = rng.uniform(0, 1, size=n)
-    ballots = []
-    for v in voters:
-        order = np.argsort(np.abs(positions - v), kind="stable")
-        ballots.append(WeakOrder.strict([candidates[i] for i in order]))
-    return Profile(ballots, candidates=candidates)
+    """1-D spatial electorate (strict ballots by distance on a line): single-peaked."""
+    return spatial_1d(n, m, rng).profile

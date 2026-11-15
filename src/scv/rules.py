@@ -41,6 +41,9 @@ class Profile:
     A candidate in ``candidates`` that a ballot neither ranks nor lists as missing is
     treated as missing on that ballot. A ballot mentioning a candidate outside
     ``candidates`` is an error.
+
+    For large or simulated electorates use :meth:`from_ranks` or :meth:`from_scores`,
+    which take an (n, m) array and build ``WeakOrder`` objects only if ``ballots`` is read.
     """
 
     def __init__(
@@ -49,6 +52,58 @@ class Profile:
         candidates: Sequence[str],
         weights: Sequence[float] | np.ndarray | None = None,
     ) -> None:
+        self._set_candidates(candidates)
+        ballots = tuple(ballots)
+        if not ballots:
+            raise ValueError("a profile needs at least one ballot")
+        for i, b in enumerate(ballots):
+            unknown = b.candidates - self.index.keys()
+            if unknown:
+                raise ValueError(f"ballot {i} mentions unknown candidates: {sorted(unknown)}")
+        self._ballots: tuple[WeakOrder, ...] | None = ballots
+        self._ranks: np.ndarray | None = None
+        self._set_weights(weights, len(ballots))
+
+    @classmethod
+    def from_ranks(
+        cls,
+        ranks: np.ndarray,
+        candidates: Sequence[str],
+        weights: Sequence[float] | np.ndarray | None = None,
+    ) -> Profile:
+        """Build from an (n, m) array of rank values, columns in ``candidates`` order.
+
+        Lower is better, equal values tie, NaN is missing. The values need not be dense
+        (competition ranks or negated scores are fine); only their order within a row
+        matters.
+        """
+        self = cls.__new__(cls)
+        self._set_candidates(candidates)
+        r = np.asarray(ranks, dtype=float)
+        if r.ndim != 2 or r.shape[1] != len(self.candidates):
+            raise ValueError(f"expected an (n, {len(self.candidates)}) array, got shape {r.shape}")
+        if r.shape[0] == 0:
+            raise ValueError("a profile needs at least one ballot")
+        if np.isinf(r).any():
+            raise ValueError("rank values must be finite or NaN")
+        dense = _dense_ranks(r)
+        dense.setflags(write=False)
+        self._ranks = dense
+        self._ballots = None
+        self._set_weights(weights, r.shape[0])
+        return self
+
+    @classmethod
+    def from_scores(
+        cls,
+        scores: np.ndarray,
+        candidates: Sequence[str],
+        weights: Sequence[float] | np.ndarray | None = None,
+    ) -> Profile:
+        """Build from an (n, m) score array: higher is better, equal ties, NaN is missing."""
+        return cls.from_ranks(-np.asarray(scores, dtype=float), candidates, weights)
+
+    def _set_candidates(self, candidates: Sequence[str]) -> None:
         if isinstance(candidates, str):
             raise TypeError("candidates must be a sequence of names, not a string")
         self.candidates: tuple[str, ...] = tuple(candidates)
@@ -58,22 +113,13 @@ class Profile:
             raise ValueError("a profile needs at least 2 candidates")
         self.index: dict[str, int] = {c: i for i, c in enumerate(self.candidates)}
 
-        self.ballots: tuple[WeakOrder, ...] = tuple(ballots)
-        if not self.ballots:
-            raise ValueError("a profile needs at least one ballot")
-        for i, b in enumerate(self.ballots):
-            unknown = b.candidates - self.index.keys()
-            if unknown:
-                raise ValueError(f"ballot {i} mentions unknown candidates: {sorted(unknown)}")
-
+    def _set_weights(self, weights: Sequence[float] | np.ndarray | None, n: int) -> None:
         if weights is None:
-            w = np.ones(len(self.ballots), dtype=float)
+            w = np.ones(n, dtype=float)
         else:
             w = np.asarray(weights, dtype=float).copy()
-            if w.shape != (len(self.ballots),):
-                raise ValueError(
-                    f"expected {len(self.ballots)} weights, got array of shape {w.shape}"
-                )
+            if w.shape != (n,):
+                raise ValueError(f"expected {n} weights, got array of shape {w.shape}")
             if not np.all(np.isfinite(w)) or np.any(w < 0):
                 raise ValueError("weights must be finite and non-negative")
         if w.sum() <= 0:
@@ -83,7 +129,7 @@ class Profile:
 
     @property
     def n(self) -> int:
-        return len(self.ballots)
+        return len(self.weights)
 
     @property
     def m(self) -> int:
@@ -98,14 +144,23 @@ class Profile:
         """Absolute tolerance under which two weighted totals count as equal."""
         return RTOL * max(1.0, self.total_weight)
 
-    @cached_property
+    @property
+    def ballots(self) -> tuple[WeakOrder, ...]:
+        """The ballots as ``WeakOrder`` objects (built on first use for array profiles)."""
+        if self._ballots is None:
+            self._ballots = tuple(_ballot_from_row(row, self.candidates) for row in self.ranks)
+        return self._ballots
+
+    @property
     def ranks(self) -> np.ndarray:
         """(n, m) tie-group index per ballot and candidate (0 = best); NaN = missing."""
-        r = np.full((self.n, self.m), np.nan)
-        for i, b in enumerate(self.ballots):
-            r[i] = _rank_row(b, self.index)
-        r.setflags(write=False)
-        return r
+        if self._ranks is None:
+            r = np.full((self.n, self.m), np.nan)
+            for i, b in enumerate(self.ballots):
+                r[i] = _rank_row(b, self.index)
+            r.setflags(write=False)
+            self._ranks = r
+        return self._ranks
 
     @cached_property
     def pairwise(self) -> np.ndarray:
@@ -123,6 +178,30 @@ class Profile:
         s = np.where(d > self.tol, 1, np.where(d < -self.tol, -1, 0))
         s.setflags(write=False)
         return s
+
+
+def _dense_ranks(x: np.ndarray) -> np.ndarray:
+    """Row-wise dense ranks (0 = lowest value) of an (n, m) array; NaN stays NaN."""
+    order = np.argsort(x, axis=1, kind="stable")  # NaN sorts last
+    xs = np.take_along_axis(x, order, axis=1)
+    is_new = np.ones(xs.shape, dtype=bool)
+    is_new[:, 1:] = xs[:, 1:] != xs[:, :-1]
+    dense_sorted = np.cumsum(is_new, axis=1) - 1.0
+    dense_sorted[np.isnan(xs)] = np.nan
+    out = np.empty_like(x)
+    np.put_along_axis(out, order, dense_sorted, axis=1)
+    return out
+
+
+def _ballot_from_row(row: np.ndarray, candidates: Sequence[str]) -> WeakOrder:
+    groups: dict[float, list[str]] = {}
+    missing = []
+    for c, r in zip(candidates, row.tolist(), strict=True):
+        if r != r:  # NaN
+            missing.append(c)
+        else:
+            groups.setdefault(r, []).append(c)
+    return WeakOrder(tuple(tuple(groups[r]) for r in sorted(groups)), frozenset(missing))
 
 
 def _rank_row(ballot: WeakOrder, index: dict[str, int]) -> np.ndarray:
