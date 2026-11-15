@@ -1,0 +1,12 @@
+# Data and results never go in git (SPEC §3). ANES files are registration-gated.
+data/
+results/
+
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.DS_Store
