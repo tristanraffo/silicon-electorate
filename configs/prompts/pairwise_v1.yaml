@@ -1,0 +1,20 @@
+# Pairwise choice read from next-token log-probs (SPEC §10.3).
+id: pairwise_v1
+labels: ["1", "2"]
+user: |-
+  The following is how a survey respondent describes themselves:
+
+  "{persona}"
+
+  Answer the survey question below exactly as this person would.
+
+  Which do you prefer?
+  1: {first}
+  2: {second}
+  Answer with 1 or 2.
+# Base models only (SPEC §10.4).
+completion: |-
+  Survey transcript.
+  {persona}
+  Q: Which do you prefer? 1: {first}  2: {second}. Answer with 1 or 2.
+  A:

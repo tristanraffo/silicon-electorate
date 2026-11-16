@@ -1,0 +1,22 @@
+# First-person backstory (SPEC §8). One sentence per persona field, in this order.
+# A sentence is dropped entirely when its field is missing; nothing is ever filled
+# with "unknown". Values are the human-readable labels from the election config's
+# value_labels, and must read naturally inside the sentence:
+#   age: "45"            gender: "a man"          race_ethnicity: "White"
+#   education: "a bachelor's degree"              income: "$50,000 to $59,999"
+#   state_or_region: "Ohio"                       party_id_7: "a strong Democrat"
+#   ideology_7: "slightly conservative"           religious_attendance: "every week"
+#   vote_prior: "voted for Joe Biden"
+id: persona_v1
+joiner: " "
+sentences:
+  - {field: age, text: "I am {age} years old."}
+  - {field: gender, text: "I am {gender}."}
+  - {field: race_ethnicity, text: "My race or ethnicity is {race_ethnicity}."}
+  - {field: education, text: "My highest level of education is {education}."}
+  - {field: income, text: "My household income is {income} a year."}
+  - {field: state_or_region, text: "I live in {state_or_region}."}
+  - {field: party_id_7, text: "Politically, I think of myself as {party_id_7}."}
+  - {field: ideology_7, text: "My political views are {ideology_7}."}
+  - {field: religious_attendance, text: "I attend religious services {religious_attendance}."}
+  - {field: vote_prior, text: "In the last presidential election, I {vote_prior}."}

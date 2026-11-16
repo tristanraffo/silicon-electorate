@@ -1,0 +1,29 @@
+# Thermometer elicitation (SPEC §10.1). {question_text} is the exact ANES wording from
+# the election config. The persona goes in the user turn, not a system turn, so that
+# the text is identical for models whose chat template has no system role.
+id: thermometer_v1
+max_tokens: 8
+user: |-
+  The following is how a survey respondent describes themselves:
+
+  "{persona}"
+
+  Answer the survey question below exactly as this person would.
+
+  {question_text}
+
+  {candidate}
+
+  Respond with a single whole number from 0 to 100 and nothing else.
+# Later turns of a sequential (multi-turn) thermometer battery.
+followup: |-
+  {candidate}
+
+  Respond with a single whole number from 0 to 100 and nothing else.
+repair: "Please respond with a single whole number from 0 to 100 and nothing else."
+# Base models only (SPEC §10.4): plain completion, no chat template.
+completion: |-
+  Survey transcript.
+  {persona}
+  Q: {question_text} {candidate} (Answer with a number from 0 to 100.)
+  A:

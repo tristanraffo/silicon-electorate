@@ -35,7 +35,10 @@ packages = ["src/scv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not hf'"
+markers = [
+    "hf: loads a real (tiny) Hugging Face model; run with `uv run pytest -m hf`",
+]
 
 [tool.ruff]
 line-length = 100

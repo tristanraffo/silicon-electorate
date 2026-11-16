@@ -8,8 +8,14 @@ Read `SPEC.md` first. This file is enough to resume from a fresh session.
 uv sync && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
-All three must be green before starting the next milestone (111 tests, about 10 s). Then
-begin **M3**.
+All three must be green before starting the next milestone (152 tests, about 15 s; no
+model is loaded). The real-model smoke test is opt-in:
+
+```bash
+uv run pytest -m hf -s
+```
+
+Then begin **M4**.
 
 ## Done
 
@@ -19,40 +25,54 @@ begin **M3**.
   - `src/scv/rules.py`: `Profile` (also `Profile.from_ranks` / `from_scores` for arrays; cached
     `ranks`, `pairwise`, `majority`), `pairwise_matrix`, `condorcet_winner` / `condorcet_loser`,
     `has_majority_cycle`, `smith_set`, `three_cycles`, `majority_cycles`, `condorcet_order`,
-    six rules (`plurality`, `borda`, `copeland`, `minimax`, `kemeny`, `irv`) via `RULES` /
-    `run_all_rules`, `rule_disagreement`, `irv_monotonicity_probe`.
-  - Tests: `tests/test_ballots.py`, `tests/test_rules.py` (every §5 required test, worked by
-    hand in comments), `tests/test_rules_reference.py` (cross-check against slow reference
-    implementations). Shared builders in `tests/helpers.py`.
+    six rules via `RULES` / `run_all_rules`, `rule_disagreement`, `irv_monotonicity_probe`.
 - **M2 — `domains.py`, `nulls.py`** ✅
-  - `src/scv/nulls.py`: `impartial_culture`, `spatial` / `spatial_1d` / `spatial_2d`
-    (returns `SpatialElectorate` with `.profile`, `.scores`, `.axis`), `permutation_null`.
+  - `src/scv/nulls.py`: `impartial_culture`, `spatial` / `spatial_1d` / `spatial_2d`,
+    `permutation_null`.
   - `src/scv/domains.py`: `all_axes`, `is_single_peaked`, `is_single_plateaued`,
     `sp_consistency`, `sp_axes`, `sp_max_consistent`, `sp_deletion_share`,
-    `single_peakedness` (both checks), `value_restriction`, `dimensionality`, `diversity`,
-    `kendall_tau_distance`.
-  - Tests: `tests/test_domains.py`, `tests/test_nulls.py`. Observed calibration values:
-    IC cycle frequency 8.82% (target 8.77% ± 0.5 pp); IC SP deletion share 0.8350.
+    `single_peakedness`, `value_restriction`, `dimensionality`, `diversity`.
+  - Calibration: IC cycle frequency 8.82% (target 8.77% ± 0.5 pp); IC SP deletion share 0.8350.
+- **M3 — backends `mock` and `hf`, `prompts.py`, `elicit.py`** ✅
+  - `configs/prompts/{persona,thermometer,ranking,pairwise}_v1.yaml`.
+  - `src/scv/prompts.py`: `load_templates`, `Template.render`, content hashing,
+    `render_persona` (drops missing fields).
+  - `src/scv/backends/`: `base.py` (`Backend`, `ChatPrompt`, `BackendError`), `mock.py`
+    (`MockBackend`: hidden utilities, noise, position bias, failure rate), `hf.py`
+    (`HFBackend`: chat template, thinking off, per-prompt seeds, single-token label check,
+    fail-fast load errors).
+  - `src/scv/elicit.py`: `ElicitConfig`, `Respondent`, `plan_calls` → `Call` (with the §11
+    `key`), `execute` (yields call-log record batches; retries; sequential chains),
+    `run_elicitation` (in-memory), `parse_thermometer`, `parse_ranking`,
+    `thermometer_table`, `ranking_table`, `pairwise_table`, `pairwise_coherence`.
+  - Acceptance: mock end-to-end recovers 100% of hidden rankings at noise 0 in all three
+    modes (`tests/test_elicit.py`); tiny-model CPU smoke test passes
+    (`tests/test_hf_smoke.py`, see `DECISIONS.md` for the observed numbers).
 
 ## Next
 
-- **M3 — backends `mock` and `hf`, plus `elicit.py`** (SPEC §9, §10). Acceptance: an
-  end-to-end test with `mock` recovers the hidden utilities' ranking for more than 95% of
-  mock voters at noise 0; the tiny-model smoke test (`Qwen/Qwen2.5-0.5B-Instruct`, about
-  1 GB, under the 2 GB download limit) runs on CPU for 5 respondents × 3 candidates.
-  - Needs `prompts.py` (template rendering and hashing) and the four
-    `configs/prompts/*_v1.yaml` files first; `elicit.py` depends on them.
-  - Elicitation output feeds `scv.ballots.from_scores` (thermometer) and `WeakOrder`
-    (ranking); pairwise mode produces probabilities for the H4 metrics in §10.3.
-- Then M4 → M7 in the order of SPEC §13.
+- **M4 — `runner.py` with resumability and dry run** (SPEC §11). Acceptance: a test kills
+  the runner mid-run, restarts it, and finds zero duplicate keys and a complete call count.
+  - Build on `elicit.plan_calls` (all keys known up front) and `elicit.execute` (yields
+    record batches; accepts any subset of calls). Skip calls whose key is already in
+    `results/calls/<run_id>/part-*.parquet`; add `run_id` to each row; flush every 500.
+  - Sequential thermometer chains (`Call.chain`) must be re-run whole: if any turn of a
+    chain is missing, run the chain and drop rows whose key is already logged.
+  - Also in M4: `configs/models/models.yaml` plus a loader/factory for backends,
+    `configs/runs/dev_smoke.yaml`, `cli.py` with `scv elicit --config … --dry-run`
+    and `--limit-respondents K` (stratified on party_id_7), and the
+    `[project.scripts] scv = "scv.cli:app"` entry point.
+  - Respondents come from M5's `personas.parquet`; until then the runner can take a
+    list of `Respondent` objects (tests use the mock backend).
+- Then M5 → M7 in the order of SPEC §13.
 
 ## Known issues / notes for later milestones
 
 - The `gpu` extra (`vllm`) is in the lockfile but has never been installed or run (M6).
-- No `scv` CLI entry point yet; add `[project.scripts] scv = "scv.cli:app"` when `cli.py` exists.
+  M6 must use the same plain temperature sampling as `hf.py` (`DECISIONS.md` E6) and
+  per-request seeds (E5).
 - M7 performance: compute `sp_consistency` once per electorate and reuse it across
-  bootstraps and n-curve draws (`DECISIONS.md` D10); keep `irv_monotonicity_probe`
-  (0.6 s at n = 5,000) out of the B = 1,000 bootstrap loop.
-- Flagged for Tristan in `DECISIONS.md` (⚑): R6 Borda with missing candidates; R14 the IRV
-  probe moves single ballots; D7 value restriction is all-or-nothing, graded version added.
-- ANES configs, prompts, backends, runner, analysis, CLI: not started.
+  bootstraps and n-curve draws (D10); keep `irv_monotonicity_probe` out of the bootstrap loop.
+- M7: decide which ranking is the ranking ballot (planned: the greedy one, E11).
+- Flagged for Tristan in `DECISIONS.md` (⚑): R6, R14, D7, E1 (prompt wording), E6 (sampling).
+- ANES loader, runner, CLI, vLLM backend, analysis: not started.
