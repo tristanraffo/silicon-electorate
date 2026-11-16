@@ -17,6 +17,7 @@ dependencies = [
     "transformers",
     "torch",
     "pyreadstat",
+    "matplotlib>=3.11.2",
 ]
 
 [project.optional-dependencies]

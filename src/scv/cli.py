@@ -61,6 +61,33 @@ def elicit(
     typer.echo(f"call log: {call_log_dir(cfg)}")
 
 
+@app.command()
+def analyze(
+    config: Annotated[Path, typer.Option(help="Run config of a finished run.")],
+    bootstrap: Annotated[int, typer.Option(help="Voter-bootstrap replicates (B).")] = 1000,
+    draws: Annotated[int, typer.Option(help="Sub-electorates per size for the n-curves.")] = 500,
+    replicates: Annotated[
+        int, typer.Option(help="Heterogeneous assignments and null draws (R).")
+    ] = 50,
+    seed: Annotated[int, typer.Option(help="Seed for all resampling.")] = 0,
+    no_figures: Annotated[bool, typer.Option("--no-figures", help="Tables only.")] = False,
+) -> None:
+    """Compute every metric for a run: summary.csv, Parquet tables and three figures."""
+    from scv.analysis import AnalysisOptions, analyze_run
+
+    cfg = load_run_config(config)
+    opts = AnalysisOptions(bootstrap=bootstrap, draws=draws, replicates=replicates, seed=seed)
+    try:
+        out = analyze_run(cfg, opts, figures=not no_figures)
+    except (anes.ConfigError, ValueError) as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"wrote {out}/summary.csv")
+    for path in sorted(out.rglob("*")):
+        if path.is_file() and path.name != "summary.csv":
+            typer.echo(f"  {path.relative_to(out)}")
+
+
 data_app = typer.Typer(no_args_is_help=True, help="ANES data: check configs, build tables.")
 app.add_typer(data_app, name="data")
 

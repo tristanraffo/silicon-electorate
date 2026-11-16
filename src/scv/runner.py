@@ -12,7 +12,7 @@ import hashlib
 import logging
 import os
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -351,6 +351,11 @@ class ResolvedElection:
     question_text: str
     respondents: tuple[Respondent, ...]  # before any --limit-respondents
     mock_utilities: dict[str, dict[str, float]]  # what the mock backend "believes"
+    # Human side, one row per respondent: respondent_id, weight, a score per candidate
+    # (NaN = not rated). For a synthetic election this is the mock's hidden utilities.
+    human_scores: pd.DataFrame = field(default_factory=pd.DataFrame, compare=False)
+    # respondent_id plus persona labels (party_id_7, ideology_7, ...), where known
+    personas: pd.DataFrame = field(default_factory=pd.DataFrame, compare=False)
 
 
 def resolve_election(cfg: RunConfig) -> ResolvedElection:
@@ -364,12 +369,25 @@ def resolve_election(cfg: RunConfig) -> ResolvedElection:
         if not spec.candidates or not spec.question_text:
             raise ValueError("a synthetic election needs `candidates` and `question_text`")
         respondents = synthetic_respondents(spec.n_respondents, cfg.seed)
+        utilities = synthetic_utilities(respondents, spec.candidates, cfg.seed)
         return ResolvedElection(
             id=spec.id,
             candidates=tuple(spec.candidates),
             question_text=spec.question_text,
             respondents=tuple(respondents),
-            mock_utilities=synthetic_utilities(respondents, spec.candidates, cfg.seed),
+            mock_utilities=utilities,
+            human_scores=pd.DataFrame(
+                [
+                    {"respondent_id": r.respondent_id, "weight": 1.0, **utilities[r.respondent_id]}
+                    for r in respondents
+                ]
+            ),
+            personas=pd.DataFrame(
+                {
+                    "respondent_id": [r.respondent_id for r in respondents],
+                    "party_id_7": [r.stratum for r in respondents],
+                }
+            ),
         )
 
     election = anes.load_election(spec.config or spec.id)
@@ -400,6 +418,10 @@ def resolve_election(cfg: RunConfig) -> ResolvedElection:
         question_text=spec.question_text or election.question_text,
         respondents=respondents,
         mock_utilities={rid: row.to_dict() for rid, row in filled.iterrows()},
+        human_scores=scores.assign(respondent_id=scores["respondent_id"].astype(str))[
+            ["respondent_id", "weight", *candidates]
+        ],
+        personas=personas.assign(respondent_id=personas["respondent_id"].astype(str)),
     )
 
 

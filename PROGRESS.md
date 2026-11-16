@@ -8,26 +8,15 @@ Read `SPEC.md` first. This file is enough to resume from a fresh session.
 uv sync && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
-All three must be green before starting the next milestone (199 tests, about 40 s; no
-model is loaded). The real-model smoke test is opt-in:
+All three must be green (225 tests, about 40 s; no model is loaded). The real-model
+smoke test is opt-in:
 
 ```bash
 uv run pytest -m hf -s
 ```
 
-Try the CLI (mock backend, synthetic personas, writes to `results/`):
-
-```bash
-uv run scv elicit --config configs/runs/dev_smoke.yaml --dry-run
-```
-
-Check an election config (lists TODOs, exits non-zero until it is ready):
-
-```bash
-uv run scv data check anes2024_ts
-```
-
-Then begin **M7**.
+**All seven milestones (M1–M7) are built.** What remains is real data and a real GPU
+run; see "What Tristan has to do" and "Not yet verified" below.
 
 ## Done
 
@@ -91,6 +80,16 @@ Then begin **M7**.
     gpu`, HF login, dry run, pilot, run, rsync back, destroy).
   - `configs/models/models.yaml` ids verified on the Hub (Llama and Gemma are gated).
 
+- **M7 — `electorates.py`, `analysis.py`, notebook** ✅
+  - `src/scv/electorates.py`: `build_ballot_table`, `human_electorate`, `homogeneous`,
+    `assign_models`, `heterogeneous`, `null_ic`, `null_permutation`.
+  - `src/scv/analysis.py`: `point_metrics`, `bootstrap`, `n_curve`, `matched_comparisons`,
+    `matched_groups`, `analyze`, `write_outputs`, `analyze_run`, `fig_cycle_ncurves`,
+    `fig_sp_deletion`, `fig_pc1`.
+  - CLI: `scv analyze --config <run.yaml>`. Notebook: `notebooks/01_results.ipynb`.
+  - Acceptance: `tests/test_analysis.py::test_scv_analyze_writes_summary_and_three_figures`
+    runs `scv analyze` on a mock-generated run over the synthetic ANES fixture.
+
 ## What Tristan has to do before real data runs
 
 1. Put the ANES file in `data/raw/` and set `file:` in the election YAML.
@@ -99,37 +98,24 @@ Then begin **M7**.
    Optionally set `id_var`. `tests/fixtures/anes_synthetic.yaml` is a complete example.
 3. `uv run scv data check <election>` until it prints OK, then `uv run scv data build <election>`.
 
-## Next
+## Not yet verified (do these before trusting results)
 
-- **M7 — `electorates.py`, `analysis.py`, notebook** (SPEC §12). Acceptance: `scv analyze`
-  runs on a mock-generated run and produces `results/metrics/<run_id>/summary.csv` and
-  three figures: cycle-rate n-curves by electorate; SP deletion share by electorate ×
-  election; PC1 share, human vs. LLM.
-  - Input for tests: a mock run on the synthetic ANES fixture (see
-    `tests/test_anes.py::anes_run`): the mock answers with each respondent's human scores
-    plus noise, so human and "LLM" electorates are matched and known.
-  - `electorates.py`: Human (ANES thermometer ballots, weights), Homogeneous(model k),
-    Heterogeneous (seeded assignment of personas to pool models, stratified on
-    party_id_7, R = 50 draws), nulls (IC with same n and m; permutation null of the human
-    profile). Ballot sources: thermometer-derived (`elicit.thermometer_table` →
-    `Profile.from_scores`) and ranking-derived (`elicit.ranking_table`, greedy ranking, E11).
-  - `analysis.py`: all §5–§6 metrics per electorate × election × ballot source; voter
-    bootstrap (B = 1,000, weighted); n-curves for n ∈ {11, 25, 51, 101, 251, 501} with 500
-    draws; matched comparisons (Kendall tau-b, top-choice agreement, absolute thermometer
-    error, by party ID and ideology). Weighted is the headline, unweighted also reported
-    (§14.3). Output parquet files plus one tidy `summary.csv`.
-  - `notebooks/01_results.ipynb`: thin; only reads the metrics files and draws figures.
-  - matplotlib is not yet a dependency; add it for the figures.
+1. **vLLM on a GPU** has never run (`DECISIONS.md` V1, V2, V4, V7). Follow the README
+   runbook; start with the 20-respondent pilot and check parse rates and
+   `missing_label_count`.
+2. **Real ANES data** has never been loaded: every test uses the synthetic fixture.
+3. **Prompt wording** (E1) and the **sampling settings** (E6) should be reviewed before the
+   first paid run; changing a template afterwards changes every call key.
+4. **Dry-run throughput** defaults are placeholders (U9); calibrate from the pilot.
+5. Full-scale timing of `scv analyze` (n ≈ 5,000, m = 7, B = 1,000, R = 50) has not been
+   measured; the replicated electorates are the slow part (about 1.3 s per draw for the
+   single-peakedness matrix). Use `--replicates 10` for a first look.
+6. Decisions flagged ⚑ in `DECISIONS.md`: R6, R14, D7, E1, E6, A2, A5, V1/V2/V4/V7, M6.
 
-## Known issues / notes for later milestones
+## Possible follow-ups (not in the spec's milestones)
 
-- The vLLM path has never run on a GPU (`DECISIONS.md` V1, V2, V4, V7 say what to check
-  first). Follow the README runbook and start with the 20-respondent pilot.
-- Dry-run throughput defaults are placeholders, not measurements (U9).
-- M7 performance: compute `sp_consistency` once per electorate and reuse it across
-  bootstraps and n-curve draws (D10); keep `irv_monotonicity_probe` out of the bootstrap loop.
-- M7: decide which ranking is the ranking ballot (planned: the greedy one, E11). A mock run
-  on the synthetic ANES fixture (`tests/test_anes.py::anes_run`) is the natural test input.
-- Flagged for Tristan in `DECISIONS.md` (⚑): R6, R14, D7, E1 (prompt wording), E6
-  (sampling), A2 (2016 candidate lists), A5 (zero-weight cases dropped), V1/V2/V4/V7 (vLLM).
-- Analysis (M7): not started.
+- H2 (dimensionality moderation) and H5 (training stage) need no new code: run several
+  candidate sets (`election.candidates:` subsets) or the `training_stage` models as
+  separate `run_id`s and concatenate their `summary.csv` files in the notebook.
+- H4 per-voter coherence is in `summary.csv` as `h4_*` (source `pairwise`) and per voter
+  in `coherence.parquet`; there is no figure for it yet.

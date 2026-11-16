@@ -36,8 +36,24 @@ uv run pytest -m hf -s
 | `uv run scv elicit --config <run.yaml> --dry-run` | Call counts by model and mode, token and time estimate, what is already logged. |
 | `uv run scv elicit --config <run.yaml>` | Runs or resumes the run. Safe to kill and rerun. |
 | `… --limit-respondents K` | Pilot on K respondents, stratified on party ID. |
+| `uv run scv analyze --config <run.yaml>` | Writes `results/metrics/<run_id>/`: `summary.csv`, Parquet tables and three figures. Options: `--bootstrap`, `--draws`, `--replicates`, `--seed`, `--no-figures`. |
 
 `<election>` is an id from `configs/elections/` or a path to a YAML file.
+
+## Trying the whole pipeline without data or a GPU
+
+The dev config uses made-up personas and the mock backend (a noisy copy of made-up
+"human" scores), so the numbers mean nothing, but every stage runs:
+
+```bash
+uv run scv elicit --config configs/runs/dev_smoke.yaml
+```
+
+```bash
+uv run scv analyze --config configs/runs/dev_smoke.yaml --bootstrap 200 --draws 200 --replicates 10
+```
+
+`notebooks/01_results.ipynb` reads `results/metrics/*/` and redraws the figures.
 
 ## Preparing an election (once, on the Mac)
 
@@ -151,6 +167,12 @@ uv run scv elicit --config configs/runs/prod_example.yaml --dry-run
 ```
 
 `remaining` should be 0 for every model and mode.
+
+After the results are back, analyse them on the Mac (no GPU needed):
+
+```bash
+uv run scv analyze --config configs/runs/prod_example.yaml
+```
 
 **8. Destroy the instance.** Stopping it still bills for disk. In the vast.ai console
 choose **Destroy**, or with the CLI (`vastai show instances` gives the id):

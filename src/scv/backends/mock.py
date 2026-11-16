@@ -161,7 +161,7 @@ class MockBackend(Backend):
             return "\n".join(" = ".join(group) for group in lines)
         raise ValueError(f"mock backend cannot generate for mode {mode!r}")
 
-    @staticmethod
-    def _rng(prompt: ChatPrompt, seed: int, sample: int) -> np.random.Generator:
-        digest = hashlib.sha256(prompt.text.encode("utf-8")).digest()
+    def _rng(self, prompt: ChatPrompt, seed: int, sample: int) -> np.random.Generator:
+        # the model id is part of the stream, so two mock "models" give different noise
+        digest = hashlib.sha256(f"{self.model_id}\n{prompt.text}".encode()).digest()
         return np.random.default_rng([int.from_bytes(digest[:8], "big"), int(seed), sample])
