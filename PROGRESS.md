@@ -8,7 +8,7 @@ Read `SPEC.md` first. This file is enough to resume from a fresh session.
 uv sync && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
-All three must be green before starting the next milestone (169 tests, about 30 s; no
+All three must be green before starting the next milestone (188 tests, about 35 s; no
 model is loaded). The real-model smoke test is opt-in:
 
 ```bash
@@ -21,7 +21,13 @@ Try the CLI (mock backend, synthetic personas, writes to `results/`):
 uv run scv elicit --config configs/runs/dev_smoke.yaml --dry-run
 ```
 
-Then begin **M5**.
+Check an election config (lists TODOs, exits non-zero until it is ready):
+
+```bash
+uv run scv data check anes2024_ts
+```
+
+Then begin **M6**.
 
 ## Done
 
@@ -66,30 +72,48 @@ Then begin **M5**.
     `scv elicit` process while it is writing shards, reruns the same command, and finds
     every planned key exactly once.
 
+- **M5 — `anes.py`, data check, personas** ✅
+  - `src/scv/anes.py`: `ElectionConfig`, `load_election`, `check`, `require_ready`,
+    `process` (exclusion log), `build`, `load_processed`, `label_value`, `persona_texts`.
+  - CLI: `scv data check <election>`, `scv data build <election>`.
+  - `configs/elections/{anes2024_ts,anes2016_ts,anes2016_pilot}.yaml` (TODOs except the
+    three confirmed 2024 codes), `configs/runs/prod_example.yaml`.
+  - Runner: `election: {source: anes, id: …}` via `runner.resolve_election`.
+  - Fixture: `tests/fixtures/anes_synthetic.{csv,yaml}` + `make_anes_fixture.py`
+    (synthetic, fake `SYN_*` codes). Tests: `tests/test_anes.py`.
+
+## What Tristan has to do before real data runs
+
+1. Put the ANES file in `data/raw/` and set `file:` in the election YAML.
+2. Fill every `TODO` (weight, thermometer codes, persona variables, exact question
+   text) and write `value_labels` that read naturally in `configs/prompts/persona_v1.yaml`.
+   Optionally set `id_var`. `tests/fixtures/anes_synthetic.yaml` is a complete example.
+3. `uv run scv data check <election>` until it prints OK, then `uv run scv data build <election>`.
+
 ## Next
 
-- **M5 — `anes.py`, data check, persona rendering** (SPEC §8). Acceptance: runs on a
-  synthetic ANES-shaped CSV generated in `tests/fixtures`; `scv data check <election>`
-  lists every TODO and every variable missing from the file and exits non-zero.
-  - Write `configs/elections/{anes2016_ts,anes2016_pilot,anes2024_ts}.yaml`. Confirmed
-    codes (2024, pre-election): Harris `V241156PRE`, RFK Jr. `V241159PRE`, Shapiro
-    `V241160PRE`. **Everything else stays `TODO`; never invent a code.**
-  - Outputs: `data/processed/<election>/human_scores.parquet` and `personas.parquet`
-    (labels must read naturally in `configs/prompts/persona_v1.yaml`; see its header).
-  - `render_persona` already exists in `scv.prompts`.
-  - Wire it into the runner: add `source: anes` to `runner.ElectionSpec` /
-    `load_respondents` (respondent_id, rendered persona, `stratum` = party_id_7 label),
-    then write `configs/runs/prod_example.yaml`.
-- Then M6 → M7 in the order of SPEC §13.
+- **M6 — `vllm_backend.py` and the vast.ai runbook** (SPEC §9, §13). Acceptance: the code
+  path exists and mirrors `hf`; unit tests mock vLLM; the README has copy-paste commands
+  (instance image, `uv sync --extra gpu`, HF login, `--dry-run`, run, `rsync` results
+  back, **destroy the instance**).
+  - Mirror `src/scv/backends/hf.py`: `VLLMBackend(hf_id, dtype=…, base=…)`, offline
+    batched `LLM.generate`, `logprobs=20` for next-token probabilities, per-request seeds
+    (E5), plain temperature sampling `top_k`/`top_p` off (E6), chat template with
+    `enable_thinking=False`, single-token label check at startup, fail-fast load/OOM errors,
+    logged model revision (E20). `runner.make_backend` already imports
+    `scv.backends.vllm_backend.VLLMBackend`.
+  - Verify every id in `configs/models/models.yaml` and its licence gating on the Hub (U11).
+  - vLLM cannot be installed on the Mac: tests must inject a fake `vllm` module.
+- Then M7 (SPEC §12): `electorates.py`, `analysis.py`, `scv analyze`, notebook.
 
 ## Known issues / notes for later milestones
 
 - The `gpu` extra (`vllm`) is in the lockfile but has never been installed or run (M6).
-  M6 must use the same plain temperature sampling as `hf.py` (`DECISIONS.md` E6) and
-  per-request seeds (E5), and must verify the ids in `configs/models/models.yaml` (U11).
 - Dry-run throughput defaults are placeholders, not measurements (U9).
 - M7 performance: compute `sp_consistency` once per electorate and reuse it across
   bootstraps and n-curve draws (D10); keep `irv_monotonicity_probe` out of the bootstrap loop.
-- M7: decide which ranking is the ranking ballot (planned: the greedy one, E11).
-- Flagged for Tristan in `DECISIONS.md` (⚑): R6, R14, D7, E1 (prompt wording), E6 (sampling).
-- ANES loader, vLLM backend, analysis: not started.
+- M7: decide which ranking is the ranking ballot (planned: the greedy one, E11). A mock run
+  on the synthetic ANES fixture (`tests/test_anes.py::anes_run`) is the natural test input.
+- Flagged for Tristan in `DECISIONS.md` (⚑): R6, R14, D7, E1 (prompt wording), E6
+  (sampling), A2 (2016 candidate lists), A5 (zero-weight cases dropped).
+- vLLM backend, analysis: not started.

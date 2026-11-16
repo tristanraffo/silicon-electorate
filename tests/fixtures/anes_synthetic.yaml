@@ -1,0 +1,71 @@
+# Election config for the synthetic fixture. NOT ANES: fake codes, fictional candidates.
+id: anes_synthetic
+file: tests/fixtures/anes_synthetic.csv
+weight_var: SYN_WT
+id_var: SYN_ID
+candidates:
+  Avery Adams: SYN_FT_A
+  Blake Brooks: SYN_FT_B
+  Casey Clark: SYN_FT_C
+  Devon Diaz: SYN_FT_D
+  Emery Evans: SYN_FT_E
+valid_range: [0, 100]
+min_rated: 3
+persona_vars:
+  age: SYN_AGE
+  gender: SYN_GENDER
+  race_ethnicity: SYN_RACE
+  education: SYN_EDUC
+  income: SYN_INCOME
+  state_or_region: SYN_STATE
+  party_id_7: SYN_PID7
+  ideology_7: SYN_IDEO7
+  religious_attendance: SYN_RELIG
+  vote_prior: SYN_VOTE
+value_labels:
+  age: {80: "at least 80", "*": "{value}"}
+  gender: {1: a man, 2: a woman}
+  race_ethnicity: {1: White, 2: Black, 3: Hispanic, 4: Asian, 5: Native American, 6: multiracial}
+  education:
+    1: less than a high school diploma
+    2: a high school diploma
+    3: some college
+    4: a bachelor's degree
+    5: a graduate degree
+  income:
+    1: under $25,000
+    2: $25,000 to $49,999
+    3: $50,000 to $74,999
+    4: $75,000 to $124,999
+    5: $125,000 or more
+  party_id_7:
+    1: a strong Democrat
+    2: a not very strong Democrat
+    3: an independent who leans Democratic
+    4: an independent
+    5: an independent who leans Republican
+    6: a not very strong Republican
+    7: a strong Republican
+  ideology_7:
+    1: extremely liberal
+    2: liberal
+    3: slightly liberal
+    4: moderate
+    5: slightly conservative
+    6: conservative
+    7: extremely conservative
+  religious_attendance:
+    1: every week
+    2: almost every week
+    3: once or twice a month
+    4: a few times a year
+    5: never
+  vote_prior:
+    1: voted for the Democratic candidate
+    2: voted for the Republican candidate
+    3: voted for another candidate
+    4: did not vote
+question_text: >-
+  How would you rate this person on a scale from 0 to 100, where 0 means you feel very
+  cold toward them and 100 means you feel very warm? (Synthetic test wording, not the
+  ANES question.)

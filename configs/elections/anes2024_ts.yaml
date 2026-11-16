@@ -1,0 +1,32 @@
+# ANES 2024 Time Series. Codes marked TODO are unknown and must come from the codebook.
+# `scv data check anes2024_ts` lists everything still to fill in.
+id: anes2024_ts
+file: data/raw/anes_timeseries_2024_csv.csv     # Tristan: set the real filename
+weight_var: TODO
+id_var: null            # optional respondent-id column; null = row number in the file
+candidates:             # display name -> thermometer variable code
+  Kamala Harris: V241156PRE
+  Robert F. Kennedy Jr.: V241159PRE
+  Josh Shapiro: V241160PRE
+  Donald Trump: TODO
+valid_range: [0, 100]   # everything else is missing (ANES uses negative codes and 998/999)
+min_rated: 3            # respondents rating fewer candidates are excluded (count is logged)
+persona_vars:           # all TODO until Tristan fills them in from the codebook
+  age: TODO
+  gender: TODO
+  race_ethnicity: TODO
+  education: TODO
+  income: TODO
+  state_or_region: TODO
+  party_id_7: TODO
+  ideology_7: TODO
+  religious_attendance: TODO
+  vote_prior: TODO
+# Optional: persona field -> {code: label}. Labels must read naturally inside the
+# sentences of configs/prompts/persona_v1.yaml, e.g.
+#   party_id_7: {1: a strong Democrat, 2: a not very strong Democrat, ...}
+#   vote_prior: {1: voted for Joe Biden, 2: voted for Donald Trump, 3: did not vote}
+# Rules: a field with no entry is used as is (negative codes = missing); with an entry,
+# unlisted codes are missing unless a "*": "{value}" key lets them through.
+value_labels: {}
+question_text: TODO     # the exact ANES thermometer wording, pasted from the questionnaire

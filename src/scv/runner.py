@@ -24,6 +24,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 from tqdm import tqdm
 
+from scv import anes
 from scv.backends.base import Backend, BackendError
 from scv.elicit import MODES, Call, ElicitConfig, Respondent, derive_seed, execute, plan_calls
 from scv.prompts import load_templates, render_persona
@@ -218,14 +219,22 @@ class _Strict(BaseModel):
 
 
 class ElectionSpec(_Strict):
-    """Where respondents and candidates come from. ``synthetic`` needs no data; the
-    ANES source is added with the loader in M5."""
+    """Where respondents and candidates come from.
 
-    source: Literal["synthetic"] = "synthetic"
+    ``source: synthetic`` needs no data: made-up personas, and ``candidates`` and
+    ``question_text`` are required here. ``source: anes`` reads the election config
+    ``configs/elections/<id>.yaml`` (or ``config:``) and the tables written by
+    ``scv data build <id>``; ``candidates`` may then name a subset of the election's
+    candidates (a candidate set), and ``question_text`` comes from the election config.
+    """
+
+    source: Literal["synthetic", "anes"] = "synthetic"
     id: str
-    candidates: list[str]
-    question_text: str
-    n_respondents: int = 20
+    candidates: list[str] | None = None
+    question_text: str | None = None
+    n_respondents: int = 20  # synthetic only
+    config: str | None = None  # anes only: path to the election YAML (default: by id)
+    processed_dir: str = "data/processed"  # anes only
 
 
 class Throughput(_Strict):
@@ -333,16 +342,79 @@ def synthetic_utilities(
 # --------------------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class ResolvedElection:
+    """Everything a run needs to know about its election."""
+
+    id: str
+    candidates: tuple[str, ...]
+    question_text: str
+    respondents: tuple[Respondent, ...]  # before any --limit-respondents
+    mock_utilities: dict[str, dict[str, float]]  # what the mock backend "believes"
+
+
+def resolve_election(cfg: RunConfig) -> ResolvedElection:
+    """Load the run's election: synthetic personas, or processed ANES tables.
+
+    For ANES, the mock backend's hidden utilities are the respondents' own thermometer
+    scores (50 where missing), so a mock run is a noisy copy of the human electorate.
+    """
+    spec = cfg.election
+    if spec.source == "synthetic":
+        if not spec.candidates or not spec.question_text:
+            raise ValueError("a synthetic election needs `candidates` and `question_text`")
+        respondents = synthetic_respondents(spec.n_respondents, cfg.seed)
+        return ResolvedElection(
+            id=spec.id,
+            candidates=tuple(spec.candidates),
+            question_text=spec.question_text,
+            respondents=tuple(respondents),
+            mock_utilities=synthetic_utilities(respondents, spec.candidates, cfg.seed),
+        )
+
+    election = anes.load_election(spec.config or spec.id)
+    if election.id != spec.id:
+        raise ValueError(
+            f"run config says election {spec.id!r} but {spec.config} is {election.id!r}"
+        )
+    anes.require_ready(election)
+    candidates = tuple(spec.candidates or election.candidates)
+    unknown = [c for c in candidates if c not in election.candidates]
+    if unknown:
+        raise ValueError(f"candidates not in election {election.id!r}: {unknown}")
+    scores, personas = anes.load_processed(election.id, _resolve(spec.processed_dir))
+    texts = anes.persona_texts(personas)
+    strata = (
+        personas.set_index(personas["respondent_id"].astype(str))["party_id_7"]
+        if "party_id_7" in personas
+        else pd.Series(dtype=object)
+    )
+    respondents = tuple(
+        Respondent(rid, text, stratum=None if pd.isna(strata.get(rid)) else str(strata.get(rid)))
+        for rid, text in texts.items()
+    )
+    filled = scores.set_index(scores["respondent_id"].astype(str))[list(candidates)].fillna(50.0)
+    return ResolvedElection(
+        id=election.id,
+        candidates=candidates,
+        question_text=spec.question_text or election.question_text,
+        respondents=respondents,
+        mock_utilities={rid: row.to_dict() for rid, row in filled.iterrows()},
+    )
+
+
 def load_respondents(cfg: RunConfig, limit: int | None = None) -> list[Respondent]:
     """The run's respondents after ``--limit-respondents`` / ``limit_respondents``."""
-    respondents = synthetic_respondents(cfg.election.n_respondents, cfg.seed)
     k = limit if limit is not None else cfg.limit_respondents
-    return stratified_subsample(respondents, k, cfg.seed)
+    return stratified_subsample(resolve_election(cfg).respondents, k, cfg.seed)
 
 
-def elicit_config(cfg: RunConfig, model_spec: Mapping[str, Any]) -> ElicitConfig:
+def elicit_config(
+    cfg: RunConfig, model_spec: Mapping[str, Any], election: ResolvedElection | None = None
+) -> ElicitConfig:
     """The elicitation settings for one model. A base model gets the completion frame
     and no ranking mode (SPEC §10.4)."""
+    election = election or resolve_election(cfg)
     base = bool(model_spec.get("base", False))
     modes = [m for m in cfg.modes if not (base and m == "ranking")]
     if base and (cfg.sequential or "ranking" in cfg.modes):
@@ -352,9 +424,9 @@ def elicit_config(cfg: RunConfig, model_spec: Mapping[str, Any]) -> ElicitConfig
             model_spec.get("hf_id"),
         )
     return ElicitConfig(
-        election=cfg.election.id,
-        candidates=tuple(cfg.election.candidates),
-        question_text=cfg.election.question_text,
+        election=election.id,
+        candidates=election.candidates,
+        question_text=election.question_text,
         run_seed=cfg.seed,
         modes=tuple(modes),
         thermometer_n=cfg.thermometer_n,
@@ -370,8 +442,12 @@ def plan_run(cfg: RunConfig, limit: int | None = None) -> dict[str, list[Call]]:
     unknown = [m for m in cfg.models if m not in models]
     if unknown:
         raise ValueError(f"models not in {cfg.models_file}: {unknown}")
-    respondents = load_respondents(cfg, limit)
-    return {m: plan_calls(elicit_config(cfg, models[m]), respondents, m) for m in cfg.models}
+    election = resolve_election(cfg)
+    k = limit if limit is not None else cfg.limit_respondents
+    respondents = stratified_subsample(election.respondents, k, cfg.seed)
+    return {
+        m: plan_calls(elicit_config(cfg, models[m], election), respondents, m) for m in cfg.models
+    }
 
 
 def call_log_dir(cfg: RunConfig) -> Path:
@@ -434,7 +510,7 @@ def make_backend(cfg: RunConfig, model_key: str, respondents: Sequence[Responden
     if cfg.backend == "mock":
         from scv.backends.mock import MockBackend
 
-        utilities = synthetic_utilities(respondents, cfg.election.candidates, cfg.seed)
+        utilities = resolve_election(cfg).mock_utilities
         return MockBackend(utilities, model_id=spec["hf_id"], **cfg.backend_options)
     if cfg.backend == "hf":
         from scv.backends.hf import HFBackend

@@ -1,0 +1,23 @@
+# Example prod run on the vast.ai GPU box (SPEC §2, §11). Copy and edit; do not run as is.
+# Before it can run:
+#   1. fill every TODO in configs/elections/anes2024_ts.yaml  (scv data check anes2024_ts)
+#   2. scv data build anes2024_ts
+#   3. scv elicit --config configs/runs/prod_example.yaml --dry-run     <- always first
+# One persona is run on every model once; electorates are assembled afterwards.
+run_id: anes2024_pilot_v1         # use a new run_id whenever prompts or models change
+seed: 20261116
+backend: vllm
+models: [llama31_8b, qwen25_7b, mistral_7b, gemma2_9b]
+election:
+  source: anes
+  id: anes2024_ts
+limit_respondents: 300            # SPEC §14.5: pilot size before any full run
+modes: [thermometer, ranking, pairwise]
+thermometer_n: 5
+ranking_n: 3
+sequential: false                 # SPEC §14.1: independent thermometer calls
+flush_every: 500
+batch_size: 256
+throughput:                       # placeholders; calibrate from the pilot's latency_ms
+  prompt_tokens_per_s: 20000
+  output_tokens_per_s: 2500

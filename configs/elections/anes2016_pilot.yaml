@@ -1,0 +1,33 @@
+# ANES 2016 Pilot Study. Every code is TODO. The candidate LIST is only a suggestion:
+# keep the people whose feeling thermometers are in the file, and add or remove names.
+id: anes2016_pilot
+file: TODO
+weight_var: TODO
+id_var: null
+candidates:
+  Hillary Clinton: TODO
+  Bernie Sanders: TODO
+  Donald Trump: TODO
+  Ted Cruz: TODO
+  Marco Rubio: TODO
+valid_range: [0, 100]
+min_rated: 3
+persona_vars:           # all TODO until Tristan fills them in from the codebook
+  age: TODO
+  gender: TODO
+  race_ethnicity: TODO
+  education: TODO
+  income: TODO
+  state_or_region: TODO
+  party_id_7: TODO
+  ideology_7: TODO
+  religious_attendance: TODO
+  vote_prior: TODO
+# Optional: persona field -> {code: label}. Labels must read naturally inside the
+# sentences of configs/prompts/persona_v1.yaml, e.g.
+#   party_id_7: {1: a strong Democrat, 2: a not very strong Democrat, ...}
+#   vote_prior: {1: voted for Joe Biden, 2: voted for Donald Trump, 3: did not vote}
+# Rules: a field with no entry is used as is (negative codes = missing); with an entry,
+# unlisted codes are missing unless a "*": "{value}" key lets them through.
+value_labels: {}
+question_text: TODO     # the exact ANES thermometer wording, pasted from the questionnaire
