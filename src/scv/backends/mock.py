@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import time
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -51,6 +52,7 @@ class MockBackend(Backend):
         fail_rate: float = 0.0,
         pairwise_scale: float = 10.0,
         model_id: str = "mock",
+        delay_s: float = 0.0,
     ) -> None:
         self.utilities = {str(k): dict(v) for k, v in utilities.items()}
         self.noise = noise
@@ -58,6 +60,7 @@ class MockBackend(Backend):
         self.fail_rate = fail_rate
         self.pairwise_scale = pairwise_scale
         self.model_id = model_id
+        self.delay_s = delay_s  # sleep per backend call, to make runs slow enough to kill
         self.calls = {"generate": 0, "logprobs": 0}
 
     # -- interface --------------------------------------------------------------------
@@ -76,6 +79,7 @@ class MockBackend(Backend):
     ) -> list[list[str]]:
         seeds = per_prompt_seeds(seed, len(prompts))
         self.calls["generate"] += len(prompts)
+        time.sleep(self.delay_s)
         out = []
         for prompt, s in zip(prompts, seeds, strict=True):
             samples = []
@@ -95,6 +99,7 @@ class MockBackend(Backend):
         if len(candidates) != 2:
             raise ValueError("the mock only answers two-way choices")
         self.calls["logprobs"] += len(prompts)
+        time.sleep(self.delay_s)
         out = []
         for prompt in prompts:
             u = self._utilities(prompt)

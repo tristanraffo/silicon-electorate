@@ -98,3 +98,20 @@ and why. Tristan may override any of them; items marked **⚑** are the ones mos
 | E18 | The tiny-model test is opt-in: `uv run pytest -m hf -s`. The default suite never loads a model. **Observed** (`Qwen/Qwen2.5-0.5B-Instruct`, CPU, float32, 5 respondents × 3 candidates, 140 calls, about 3 min): thermometer parse rate 1.00, ranking parse rate 0.60 after retries, mean absolute position bias 0.031. | Keeps the default suite at about 15 s with no network. The 0.60 is a 0.5B model's formatting ability, not a pipeline fault; watch the ranking parse rate per model in the pilot. |
 | E20 | The logged `revision` is the commit hash of the snapshot actually loaded, read from the Hugging Face cache path when the model config does not carry it. | §2: a run is determined by its config plus the model revision hash. |
 | E19 | `configs/models/models.yaml` is deferred to M4, where the runner needs a loader for it. | Nothing in M3 reads it. |
+
+## M4 — `runner.py`, `cli.py`, run configs
+
+| # | Decision | Why |
+|---|---|---|
+| U1 | A shard is written to `part-XXXXX.parquet.tmp`, fsynced and renamed into place. Leftover `.tmp` files are deleted on start. | A kill mid-write must never leave a half-written shard that breaks the resume. |
+| U2 | Flushing happens when the buffer reaches `flush_every` rows (default 500), at the end, and when an exception (including Ctrl-C) unwinds. A hard kill loses at most the rows since the last flush; they are run again. Shards can exceed `flush_every` by up to one execution batch. | §11. `execute` yields whole batches. |
+| U3 | A sequential thermometer conversation that is missing any turn is re-run whole; rows whose key is already logged are dropped, never rewritten. | E12: later turns depend on earlier answers. |
+| U4 | An interrupted-and-resumed run gives the same answers as an uninterrupted one (tested with the mock at noise > 0). | Seeds are per prompt and derived from the call, not from batch position (E5). One exception: if a kill splits the 5 samples of one prompt, the missing samples are drawn with a seed that depends on which were missing. |
+| U5 | Resuming a `run_id` with a model at a different revision than the rows already logged is refused. | §2: a run is determined by config plus model revision. Use a new `run_id`. |
+| U6 | A model whose calls are all logged is not loaded at all on resume. | Saves minutes of GPU time per finished model. |
+| U7 | `--limit-respondents K` (or `limit_respondents:` in the config; the flag wins) takes a proportional share of each party-id stratum, largest remainders first, and within a stratum the respondents with the smallest SHA-256 of `(seed, id)`. | Deterministic, independent of input order, and a larger pilot contains the smaller one. |
+| U8 | Run configs are validated strictly: an unknown or misspelled field is an error. | A typo in a prod config should fail before the GPU is rented. |
+| U9 | **Dry-run estimate:** prompt tokens = characters / `chars_per_token` (default 4), counted once per request (samples sharing a prompt share a request); output tokens assume every call uses its full `max_tokens`; time = prompt tokens / `prompt_tokens_per_s` (default 20,000) + output tokens / `output_tokens_per_s` (default 2,500). Retries are not included. It also shows what is already logged (`remaining`). | §11 makes throughput a config parameter. The defaults are placeholders, **not measurements**; calibrate them from the first pilot's `latency_ms`. |
+| U10 | The run config's `election:` block currently supports only `source: synthetic` (made-up personas with a party stratum; the mock gets random hidden utilities). The ANES source arrives with M5. | §13 puts ANES after the runner; the runner still needs something to run on. |
+| U11 | `configs/models/models.yaml` is the §9 list verbatim. The ids and licence gating are **not yet verified** on the Hub (M6). `backend: vllm` currently fails fast with a message pointing at `uv sync --extra gpu`. | §9 says to verify before finalizing. |
+| U12 | `configs/runs/prod_example.yaml` (§3) is not written yet. | It needs the ANES election source (M5) and the vLLM backend (M6) to be meaningful. |

@@ -59,10 +59,12 @@ def shuffled(items: Sequence[str], *seed_parts: Any) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Respondent:
-    """One persona. ``persona`` is the rendered backstory text."""
+    """One persona. ``persona`` is the rendered backstory text; ``stratum`` is not shown
+    to the model."""
 
     respondent_id: str
     persona: str
+    stratum: str | None = None  # party_id_7 label, for stratified subsampling
 
 
 @dataclass(frozen=True)

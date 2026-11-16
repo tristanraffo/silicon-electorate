@@ -8,14 +8,20 @@ Read `SPEC.md` first. This file is enough to resume from a fresh session.
 uv sync && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
-All three must be green before starting the next milestone (152 tests, about 15 s; no
+All three must be green before starting the next milestone (169 tests, about 30 s; no
 model is loaded). The real-model smoke test is opt-in:
 
 ```bash
 uv run pytest -m hf -s
 ```
 
-Then begin **M4**.
+Try the CLI (mock backend, synthetic personas, writes to `results/`):
+
+```bash
+uv run scv elicit --config configs/runs/dev_smoke.yaml --dry-run
+```
+
+Then begin **M5**.
 
 ## Done
 
@@ -49,30 +55,41 @@ Then begin **M4**.
     modes (`tests/test_elicit.py`); tiny-model CPU smoke test passes
     (`tests/test_hf_smoke.py`, see `DECISIONS.md` for the observed numbers).
 
+- **M4 — `runner.py`, `cli.py`** ✅
+  - `src/scv/runner.py`: `CallLog` (atomic Parquet shards, `CALL_SCHEMA`), `run_calls`
+    (skip logged keys, flush every N, chains re-run whole), `stratified_subsample`,
+    `RunConfig` / `load_run_config`, `load_models`, `plan_run`, `dry_run`, `make_backend`,
+    `run_from_config`, `read_calls`, `synthetic_respondents`.
+  - `src/scv/cli.py`: `scv elicit --config … [--dry-run] [--limit-respondents K]`.
+  - `configs/models/models.yaml`, `configs/runs/dev_smoke.yaml`.
+  - Acceptance: `tests/test_runner.py::test_sigkill_mid_run_then_resume_…` SIGKILLs a real
+    `scv elicit` process while it is writing shards, reruns the same command, and finds
+    every planned key exactly once.
+
 ## Next
 
-- **M4 — `runner.py` with resumability and dry run** (SPEC §11). Acceptance: a test kills
-  the runner mid-run, restarts it, and finds zero duplicate keys and a complete call count.
-  - Build on `elicit.plan_calls` (all keys known up front) and `elicit.execute` (yields
-    record batches; accepts any subset of calls). Skip calls whose key is already in
-    `results/calls/<run_id>/part-*.parquet`; add `run_id` to each row; flush every 500.
-  - Sequential thermometer chains (`Call.chain`) must be re-run whole: if any turn of a
-    chain is missing, run the chain and drop rows whose key is already logged.
-  - Also in M4: `configs/models/models.yaml` plus a loader/factory for backends,
-    `configs/runs/dev_smoke.yaml`, `cli.py` with `scv elicit --config … --dry-run`
-    and `--limit-respondents K` (stratified on party_id_7), and the
-    `[project.scripts] scv = "scv.cli:app"` entry point.
-  - Respondents come from M5's `personas.parquet`; until then the runner can take a
-    list of `Respondent` objects (tests use the mock backend).
-- Then M5 → M7 in the order of SPEC §13.
+- **M5 — `anes.py`, data check, persona rendering** (SPEC §8). Acceptance: runs on a
+  synthetic ANES-shaped CSV generated in `tests/fixtures`; `scv data check <election>`
+  lists every TODO and every variable missing from the file and exits non-zero.
+  - Write `configs/elections/{anes2016_ts,anes2016_pilot,anes2024_ts}.yaml`. Confirmed
+    codes (2024, pre-election): Harris `V241156PRE`, RFK Jr. `V241159PRE`, Shapiro
+    `V241160PRE`. **Everything else stays `TODO`; never invent a code.**
+  - Outputs: `data/processed/<election>/human_scores.parquet` and `personas.parquet`
+    (labels must read naturally in `configs/prompts/persona_v1.yaml`; see its header).
+  - `render_persona` already exists in `scv.prompts`.
+  - Wire it into the runner: add `source: anes` to `runner.ElectionSpec` /
+    `load_respondents` (respondent_id, rendered persona, `stratum` = party_id_7 label),
+    then write `configs/runs/prod_example.yaml`.
+- Then M6 → M7 in the order of SPEC §13.
 
 ## Known issues / notes for later milestones
 
 - The `gpu` extra (`vllm`) is in the lockfile but has never been installed or run (M6).
   M6 must use the same plain temperature sampling as `hf.py` (`DECISIONS.md` E6) and
-  per-request seeds (E5).
+  per-request seeds (E5), and must verify the ids in `configs/models/models.yaml` (U11).
+- Dry-run throughput defaults are placeholders, not measurements (U9).
 - M7 performance: compute `sp_consistency` once per electorate and reuse it across
   bootstraps and n-curve draws (D10); keep `irv_monotonicity_probe` out of the bootstrap loop.
 - M7: decide which ranking is the ranking ballot (planned: the greedy one, E11).
 - Flagged for Tristan in `DECISIONS.md` (⚑): R6, R14, D7, E1 (prompt wording), E6 (sampling).
-- ANES loader, runner, CLI, vLLM backend, analysis: not started.
+- ANES loader, vLLM backend, analysis: not started.

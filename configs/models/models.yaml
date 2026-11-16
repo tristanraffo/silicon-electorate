@@ -1,0 +1,17 @@
+# Model registry (SPEC §9). Keys are the `model_key` stored in every call-log row.
+# NOTE: these Hugging Face ids and their licence gating have NOT yet been verified
+# against the Hub; that is part of M6. Llama and Gemma need an accepted licence and
+# an HF token.
+homogeneous_default: llama31_8b
+pool:            # heterogeneous arm
+  llama31_8b:  {hf_id: meta-llama/Llama-3.1-8B-Instruct, dtype: bfloat16}
+  qwen25_7b:   {hf_id: Qwen/Qwen2.5-7B-Instruct, dtype: bfloat16}
+  mistral_7b:  {hf_id: mistralai/Mistral-7B-Instruct-v0.3, dtype: bfloat16}
+  gemma2_9b:   {hf_id: google/gemma-2-9b-it, dtype: bfloat16}
+training_stage:  # H5
+  olmo2_base:  {hf_id: allenai/OLMo-2-1124-7B, base: true}
+  olmo2_sft:   {hf_id: allenai/OLMo-2-1124-7B-SFT}
+  olmo2_dpo:   {hf_id: allenai/OLMo-2-1124-7B-DPO}
+  olmo2_inst:  {hf_id: allenai/OLMo-2-1124-7B-Instruct}
+dev:
+  tiny:        {hf_id: Qwen/Qwen2.5-0.5B-Instruct}

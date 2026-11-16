@@ -1,0 +1,19 @@
+# Dev smoke run: synthetic personas, mock backend. No model, no data, a few seconds.
+#   uv run scv elicit --config configs/runs/dev_smoke.yaml --dry-run
+#   uv run scv elicit --config configs/runs/dev_smoke.yaml
+# Switch `backend: hf` to run the same thing on the tiny model in `models` (CPU, slow).
+run_id: dev_smoke
+seed: 0
+backend: mock
+models: [tiny]
+election:
+  source: synthetic
+  id: synthetic_demo
+  candidates: [Alice Smith, Bob Jones, Carol White]   # fictional
+  question_text: >-
+    How would you rate this person on a scale from 0 to 100, where 0 is very cold or
+    unfavorable and 100 is very warm or favorable?
+  n_respondents: 40
+limit_respondents: 20
+modes: [thermometer, ranking, pairwise]
+flush_every: 500
