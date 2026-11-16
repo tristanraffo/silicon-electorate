@@ -7,17 +7,13 @@ the model's own `generation_config` says, so that every model is sampled the sam
 from __future__ import annotations
 
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
 
 import torch
-from huggingface_hub import try_to_load_from_cache
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from scv.backends import _tokens
 from scv.backends.base import Backend, BackendError, ChatPrompt, per_prompt_seeds
-
-_PROBE_CHAT = ChatPrompt.user("Answer with 1 or 2.")
-_PROBE_COMPLETION = ChatPrompt.plain("Q: Answer with 1 or 2.\nA:")
 
 
 def _pick_device(device: str) -> str:
@@ -28,18 +24,6 @@ def _pick_device(device: str) -> str:
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
-
-
-def _resolved_revision(hf_id: str, revision: str | None, model) -> str | None:
-    """The commit hash of the snapshot that was actually loaded (SPEC §2: a run is
-    determined by its config plus the model revision hash)."""
-    commit = getattr(model.config, "_commit_hash", None)
-    if commit:
-        return commit
-    cached = try_to_load_from_cache(hf_id, "config.json", revision=revision)
-    if isinstance(cached, str):  # .../snapshots/<commit>/config.json
-        return Path(cached).parent.name
-    return revision
 
 
 class HFBackend(Backend):
@@ -88,33 +72,19 @@ class HFBackend(Backend):
                 "and that the model fits in memory."
             ) from e
         self.model.eval()
-        self.revision = _resolved_revision(hf_id, revision, self.model)
+        self.revision = _tokens.resolved_revision(hf_id, revision, self.model.config)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = "left"
-        if not base and not self.tokenizer.chat_template:
-            raise BackendError(
-                f"{hf_id!r} has no chat template; configure it with `base: true` to use the "
-                "plain-completion prompt format"
-            )
+        _tokens.require_chat_template(self.tokenizer, base=base, model=hf_id)
         self._label_cache: dict[tuple[tuple[str, ...], bool], list[int]] = {}
         self.check_labels(["1", "2"])  # SPEC §9: assert single-token labels at startup
 
     # -- prompt rendering --------------------------------------------------------------
 
     def render(self, prompt: ChatPrompt) -> str:
-        """The exact string fed to the model: the model's own chat template with thinking
-        turned off, or the completion text verbatim."""
-        if prompt.is_completion:
-            return prompt.completion
-        if self.base:
-            raise BackendError(f"{self.hf_id!r} is a base model and only takes completion prompts")
-        return self.tokenizer.apply_chat_template(
-            [{"role": role, "content": content} for role, content in prompt.messages],
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=False,  # ignored by templates that have no thinking mode
-        )
+        """The exact string fed to the model (chat template applied, thinking off)."""
+        return _tokens.render(self.tokenizer, prompt, base=self.base, model=self.hf_id)
 
     def _encode(self, prompts: Sequence[ChatPrompt]):
         texts = [self.render(p) for p in prompts]
@@ -197,24 +167,9 @@ class HFBackend(Backend):
     def _label_ids(self, candidates: tuple[str, ...], completion: bool) -> list[int]:
         key = (candidates, completion)
         if key not in self._label_cache:
-            probe = _PROBE_COMPLETION if completion else _PROBE_CHAT
-            prefix = self.render(probe)
-            add_special = completion
-            base_ids = self.tokenizer(prefix, add_special_tokens=add_special)["input_ids"]
-            ids = []
-            for label in candidates:
-                # after "A:" a completion model writes " 1"; after a chat prefix, "1"
-                text = prefix + (" " + label if completion else label)
-                full = self.tokenizer(text, add_special_tokens=add_special)["input_ids"]
-                if len(full) != len(base_ids) + 1 or full[:-1] != base_ids:
-                    raise BackendError(
-                        f"answer label {label!r} is not a single token after the assistant "
-                        f"prefix for {self.hf_id!r} (tokens: {full[len(base_ids) - 1 :]})"
-                    )
-                ids.append(full[-1])
-            if len(set(ids)) != len(ids):
-                raise BackendError(f"answer labels {candidates} share a token for {self.hf_id!r}")
-            self._label_cache[key] = ids
+            self._label_cache[key] = _tokens.label_token_ids(
+                self.tokenizer, candidates, completion=completion, base=self.base, model=self.hf_id
+            )
         return self._label_cache[key]
 
     @torch.inference_mode()

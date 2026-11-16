@@ -8,7 +8,7 @@ Read `SPEC.md` first. This file is enough to resume from a fresh session.
 uv sync && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
-All three must be green before starting the next milestone (188 tests, about 35 s; no
+All three must be green before starting the next milestone (199 tests, about 40 s; no
 model is loaded). The real-model smoke test is opt-in:
 
 ```bash
@@ -27,7 +27,7 @@ Check an election config (lists TODOs, exits non-zero until it is ready):
 uv run scv data check anes2024_ts
 ```
 
-Then begin **M6**.
+Then begin **M7**.
 
 ## Done
 
@@ -82,6 +82,15 @@ Then begin **M6**.
   - Fixture: `tests/fixtures/anes_synthetic.{csv,yaml}` + `make_anes_fixture.py`
     (synthetic, fake `SYN_*` codes). Tests: `tests/test_anes.py`.
 
+- **M6 — `vllm_backend.py`, runbook** ✅ (code path only; **never run on a GPU**)
+  - `src/scv/backends/vllm_backend.py`: `VLLMBackend`, mirroring `hf.py`.
+  - `src/scv/backends/_tokens.py`: rendering, encoding, single-token label check and
+    revision lookup shared by `hf` and `vllm`.
+  - `tests/test_vllm_backend.py`: unit tests against a fake `vllm` module.
+  - `README.md`: commands table, election prep, vast.ai runbook (image, `uv sync --extra
+    gpu`, HF login, dry run, pilot, run, rsync back, destroy).
+  - `configs/models/models.yaml` ids verified on the Hub (Llama and Gemma are gated).
+
 ## What Tristan has to do before real data runs
 
 1. Put the ANES file in `data/raw/` and set `file:` in the election YAML.
@@ -92,28 +101,35 @@ Then begin **M6**.
 
 ## Next
 
-- **M6 — `vllm_backend.py` and the vast.ai runbook** (SPEC §9, §13). Acceptance: the code
-  path exists and mirrors `hf`; unit tests mock vLLM; the README has copy-paste commands
-  (instance image, `uv sync --extra gpu`, HF login, `--dry-run`, run, `rsync` results
-  back, **destroy the instance**).
-  - Mirror `src/scv/backends/hf.py`: `VLLMBackend(hf_id, dtype=…, base=…)`, offline
-    batched `LLM.generate`, `logprobs=20` for next-token probabilities, per-request seeds
-    (E5), plain temperature sampling `top_k`/`top_p` off (E6), chat template with
-    `enable_thinking=False`, single-token label check at startup, fail-fast load/OOM errors,
-    logged model revision (E20). `runner.make_backend` already imports
-    `scv.backends.vllm_backend.VLLMBackend`.
-  - Verify every id in `configs/models/models.yaml` and its licence gating on the Hub (U11).
-  - vLLM cannot be installed on the Mac: tests must inject a fake `vllm` module.
-- Then M7 (SPEC §12): `electorates.py`, `analysis.py`, `scv analyze`, notebook.
+- **M7 — `electorates.py`, `analysis.py`, notebook** (SPEC §12). Acceptance: `scv analyze`
+  runs on a mock-generated run and produces `results/metrics/<run_id>/summary.csv` and
+  three figures: cycle-rate n-curves by electorate; SP deletion share by electorate ×
+  election; PC1 share, human vs. LLM.
+  - Input for tests: a mock run on the synthetic ANES fixture (see
+    `tests/test_anes.py::anes_run`): the mock answers with each respondent's human scores
+    plus noise, so human and "LLM" electorates are matched and known.
+  - `electorates.py`: Human (ANES thermometer ballots, weights), Homogeneous(model k),
+    Heterogeneous (seeded assignment of personas to pool models, stratified on
+    party_id_7, R = 50 draws), nulls (IC with same n and m; permutation null of the human
+    profile). Ballot sources: thermometer-derived (`elicit.thermometer_table` →
+    `Profile.from_scores`) and ranking-derived (`elicit.ranking_table`, greedy ranking, E11).
+  - `analysis.py`: all §5–§6 metrics per electorate × election × ballot source; voter
+    bootstrap (B = 1,000, weighted); n-curves for n ∈ {11, 25, 51, 101, 251, 501} with 500
+    draws; matched comparisons (Kendall tau-b, top-choice agreement, absolute thermometer
+    error, by party ID and ideology). Weighted is the headline, unweighted also reported
+    (§14.3). Output parquet files plus one tidy `summary.csv`.
+  - `notebooks/01_results.ipynb`: thin; only reads the metrics files and draws figures.
+  - matplotlib is not yet a dependency; add it for the figures.
 
 ## Known issues / notes for later milestones
 
-- The `gpu` extra (`vllm`) is in the lockfile but has never been installed or run (M6).
+- The vLLM path has never run on a GPU (`DECISIONS.md` V1, V2, V4, V7 say what to check
+  first). Follow the README runbook and start with the 20-respondent pilot.
 - Dry-run throughput defaults are placeholders, not measurements (U9).
 - M7 performance: compute `sp_consistency` once per electorate and reuse it across
   bootstraps and n-curve draws (D10); keep `irv_monotonicity_probe` out of the bootstrap loop.
 - M7: decide which ranking is the ranking ballot (planned: the greedy one, E11). A mock run
   on the synthetic ANES fixture (`tests/test_anes.py::anes_run`) is the natural test input.
 - Flagged for Tristan in `DECISIONS.md` (⚑): R6, R14, D7, E1 (prompt wording), E6
-  (sampling), A2 (2016 candidate lists), A5 (zero-weight cases dropped).
-- vLLM backend, analysis: not started.
+  (sampling), A2 (2016 candidate lists), A5 (zero-weight cases dropped), V1/V2/V4/V7 (vLLM).
+- Analysis (M7): not started.
