@@ -4,6 +4,9 @@ Do LLM electorates generate preference profiles that sit in an Arrow-escaping do
 (single-peaked, value-restricted, acyclic) more often than matched human electorates do?
 
 `SPEC.md` is the contract. `PROGRESS.md` says what is built and how to resume.
+`ANALYSIS_PLAN.md` says which numbers answer which hypothesis and how to read each
+metric. `FULL_RUNS.md` has the commands for the full-scale runs (every respondent), which are
+kept apart from the 300-respondent pilots.
 `DECISIONS.md` records every choice the spec left open.
 
 ## Setup (dev, Apple Silicon)
@@ -36,7 +39,7 @@ uv run pytest -m hf -s
 | `uv run scv elicit --config <run.yaml> --dry-run` | Call counts by model and mode, token and time estimate, what is already logged. |
 | `uv run scv elicit --config <run.yaml>` | Runs or resumes the run. Safe to kill and rerun. |
 | `… --limit-respondents K` | Pilot on K respondents, stratified on party ID. |
-| `uv run scv analyze --config <run.yaml>` | Writes `results/metrics/<run_id>/`: `summary.csv`, Parquet tables and three figures. Options: `--bootstrap`, `--draws`, `--replicates`, `--seed`, `--no-figures`. |
+| `uv run scv analyze --config <run.yaml>` | Writes `results/metrics/<run_id>/`: `summary.csv`, Parquet tables and three figures. Options: `--bootstrap`, `--draws`, `--replicates`, `--seed`, `--no-figures`. The options used are saved in `analysis_settings.json`. |
 | `… --ranking-ballot combined` | The same, with each voter's ranking ballot averaged over their four rankings instead of the greedy one alone (cancels position bias). Writes to `results/metrics/<run_id>__ranking_combined/`. |
 | `… --exclude-ranking <model>` | Sensitivity analysis: the same, with that model's ranking ballots left out. Writes to `results/metrics/<run_id>__ranking_without_<model>/`. |
 

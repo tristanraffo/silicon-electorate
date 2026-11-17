@@ -8,7 +8,7 @@ Read `SPEC.md` first. This file is enough to resume from a fresh session.
 uv sync && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
-All three must be green (237 tests, about 45 s; no model is loaded). The real-model
+All three must be green (239 tests, about 45 s; no model is loaded). The real-model
 smoke test is opt-in:
 
 ```bash
@@ -142,18 +142,24 @@ of answers are exactly 50/50); greedy ranking parse rate 97.7–100% except Mist
    wording unverified for the two Time Series); G4, G6, G7, G8, G10, G11, G13, G14, G15
    (GPU runs). Changing a prompt, a persona label or a candidate set means a new
    `run_id` and a rerun.
-4. Look at the results: `notebooks/01_results.ipynb` reads `results/metrics/*/`.
+4. Read `ANALYSIS_PLAN.md` (which rows answer which hypothesis, how to read each metric,
+   checks to make first) and accept or edit its proposed decision rules. Then look at
+   the results: `notebooks/01_results.ipynb` reads `results/metrics/*/`. Analyses made
+   before commit "paired differences" lack the `*_minus_human` rows and
+   `analysis_settings.json`; rerun `scv analyze` to get them.
 5. Re-run the analyses at full settings (drop `--replicates 10`; B = 1,000, R = 50) once
    the choices in step 3 are settled. Timing at full scale is still unmeasured.
-6. Decide on scale: these are 300-respondent pilots (SPEC §14.5). A full run is the same
-   config without `limit_respondents` (about 18 times the calls for 2024).
+6. Full-scale runs (every respondent): configs are in `configs/runs/full/` and the
+   commands, time estimates (about 5.5 GPU-hours for all three) and GPU advice are in
+   `FULL_RUNS.md`. Not run yet.
 7. Not yet run at all: the training-stage models in `configs/models/models.yaml` (the
    OLMo checkpoints, including a base model that uses the plain-completion prompts, which
    have never met a GPU), and candidate-subset runs for H2. Both are new `run_id`s with
    no new code; start each with a 20-respondent pilot and the ranking report.
 8. Dry-run time estimates still use placeholder speeds (U9).
 
-Rules that still hold (SPEC §0): no analysis prose or paper from the assistant.
+Rules that still hold (SPEC §0): no analysis prose or paper from the assistant, apart
+from the plan Tristan asked for (`ANALYSIS_PLAN.md`, G17), which contains no findings.
 
 ## Possible follow-ups (not in the spec's milestones)
 

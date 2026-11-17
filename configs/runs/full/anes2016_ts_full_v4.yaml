@@ -1,0 +1,21 @@
+# FULL-SCALE RUN: every respondent of anes2016_ts (no limit_respondents), four pool models,
+# all modes. Same seed, settings and prompts as the 300-respondent pilots, so the only
+# difference is the sample. Commands and time estimates: FULL_RUNS.md.
+run_id: anes2016_ts_full_v4
+seed: 20261116
+backend: vllm
+models: [llama31_8b, qwen25_7b, mistral_7b, gemma2_9b]
+election:
+  source: anes
+  id: anes2016_ts
+modes: [thermometer, ranking, pairwise]
+thermometer_n: 5
+ranking_n: 3
+sequential: false
+flush_every: 5000                 # rows per log file; a kill loses at most this many calls
+batch_size: 256
+prompts:
+  ranking: ranking_v4_strict      # pinned, so this run_id always means this prompt
+throughput:                       # placeholders (see FULL_RUNS.md for measured times)
+  prompt_tokens_per_s: 20000
+  output_tokens_per_s: 2500

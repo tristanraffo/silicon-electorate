@@ -12,10 +12,12 @@ versions are reported alongside (SPEC §14.3).
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -390,6 +392,7 @@ def analyze(
     fixed = [human_electorate(table)]
     fixed += [homogeneous(table, m, "thermometer") for m in table.llm_scores]
     fixed += [homogeneous(table, m, "ranking") for m in table.llm_ranks]
+    paired: dict[str, dict[str, Any]] = {}  # weighting -> the human electorate's draws
     for e in fixed:
         consistency = domains.sp_consistency(e.profile(cands, weighted=False))
         for weighting in WEIGHTINGS:
@@ -402,7 +405,9 @@ def analyze(
                     e,
                     weighted,
                     opts.bootstrap,
-                    _rng(opts, "boot", e.name, e.source, weighting),
+                    # the same resampled voters for every electorate (they share the
+                    # respondents), so LLM-minus-human differences are paired
+                    _rng(opts, "boot", weighting),
                     consistency,
                 )
                 if opts.bootstrap > 0
@@ -421,6 +426,26 @@ def analyze(
                 if metric in boot:
                     freq = float(boot[metric].mean())
                     metrics.append({**ident(e, weighting), "metric": name, "value": freq})
+            if e.kind == "human":
+                paired[weighting] = {"values": values, "boot": boot}
+            elif weighting in paired:
+                human = paired[weighting]
+                for metric in BOOTSTRAPPED:
+                    if metric not in boot or metric not in human["boot"]:
+                        continue
+                    diff = boot[metric] - human["boot"][metric]
+                    lo, hi = np.nanpercentile(diff, [2.5, 97.5])
+                    metrics.append(
+                        {
+                            **ident(e, weighting),
+                            "metric": f"{metric}{MINUS_HUMAN}",
+                            "value": float(values[metric] - human["values"][metric]),
+                            "ci_low": float(lo),
+                            "ci_high": float(hi),
+                            "sd": float(np.nanstd(diff)),
+                            "interval": "paired_bootstrap",
+                        }
+                    )
             for rule, names in rule_winners.items():
                 winners.append({**ident(e, weighting), "rule": rule, "winners": "|".join(names)})
             for row in n_curve(
@@ -817,6 +842,14 @@ def read_outputs(out_dir: str | Path) -> dict[str, pd.DataFrame]:
 # --------------------------------------------------------------------------------------
 
 
+#: Suffix of the paired difference rows: this electorate's value minus the human
+#: electorate's, with the interval from resampling the same voters in both.
+MINUS_HUMAN = "_minus_human"
+
+#: Written next to summary.csv: the options and inputs that produced that folder.
+SETTINGS_FILE = "analysis_settings.json"
+
+
 def variant_id(
     run_id: str, exclude_ranking: Sequence[str] = (), ranking_ballot: str = "greedy"
 ) -> str:
@@ -894,6 +927,21 @@ def analyze_run(
         )
     tables["coherence"] = coherence
     out = write_outputs(tables, metrics_dir(cfg.results_dir, label))
+    settings = {
+        "run_id": cfg.run_id,
+        "variant": label,
+        "election": election.id,
+        "candidates": list(election.candidates),
+        "n_respondents": table.n,
+        "models": list(table.models),
+        "mixed_model_pool": list(pool),
+        "ranking_ballot": ranking_ballot,
+        "exclude_ranking": sorted(exclude_ranking),
+        **dataclasses.asdict(opts or AnalysisOptions()),
+        "n_calls": int(len(calls)),
+        "written": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    (out / SETTINGS_FILE).write_text(json.dumps(settings, indent=2) + "\n")
     if figures:
         write_figures(tables, out)
     return out

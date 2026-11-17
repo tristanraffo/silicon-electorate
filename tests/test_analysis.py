@@ -849,3 +849,48 @@ def test_combined_ranking_ballot_averages_all_of_a_voters_rankings(noisy, root):
     both = analysis.variant_id("r", ["m2", "m1"], "combined")
     assert both == "r__ranking_combined__ranking_without_m1_m2"
     assert set(analysis.read_outputs(out)["metrics"]["run_id"]) == {out.name}
+
+
+def test_analysis_records_the_settings_that_produced_each_folder(noisy):
+    import json
+
+    small = AnalysisOptions(bootstrap=11, draws=12, replicates=3, sizes=(11,), seed=9)
+    out = analysis.analyze_run(noisy, small, figures=False, ranking_ballot="combined")
+    s = json.loads((out / analysis.SETTINGS_FILE).read_text())
+    assert (s["bootstrap"], s["draws"], s["replicates"], s["seed"]) == (11, 12, 3, 9)
+    assert s["ranking_ballot"] == "combined" and s["exclude_ranking"] == []
+    assert s["run_id"] == noisy.run_id and s["variant"] == out.name
+    assert s["n_respondents"] == 150 and set(s["models"]) == set(MODELS)
+    assert s["sizes"] == [11] and s["written"].startswith("20")
+    analysis.read_outputs(out)  # the extra file does not disturb reading the tables
+
+
+def test_paired_differences_from_the_human_electorate(table, tables):
+    """`<metric>_minus_human` rows: the same resampled voters are used for the human and
+    the LLM electorate, so identical ballots give a difference of exactly zero in every
+    resample (unpaired resampling would not)."""
+    small = AnalysisOptions(bootstrap=40, draws=10, replicates=2, sizes=(11,), seed=3)
+    import dataclasses
+
+    twin = dataclasses.replace(table, llm_scores={"tiny": table.human.copy()}, llm_ranks={})
+    m = analysis.analyze(twin, "x", None, small)["metrics"]
+    d = m[m["metric"].str.endswith(analysis.MINUS_HUMAN) & (m["source"] == "thermometer")]
+    assert set(d["metric"]) == {"sp_deletion_share_minus_human", "pc1_share_minus_human"}
+    assert set(d["electorate"]) == {"tiny"} and set(d["interval"]) == {"paired_bootstrap"}
+    np.testing.assert_allclose(d[["value", "ci_low", "ci_high", "sd"]].to_numpy(), 0, atol=1e-12)
+
+    # with noise: the point difference is the difference of the two point values, and the
+    # paired interval is tighter than the two separate intervals would suggest
+    t = tables["metrics"]
+    key = (t["weighting"] == "weighted") & (t["source"] == "thermometer")
+    one = lambda e, name: t[key & (t["electorate"] == e) & (t["metric"] == name)].iloc[0]  # noqa: E731
+    for model in MODELS:
+        diff = one(model, "sp_deletion_share_minus_human")
+        a, h = one(model, "sp_deletion_share"), one("human", "sp_deletion_share")
+        assert diff["value"] == pytest.approx(a["value"] - h["value"])
+        assert diff["ci_low"] <= diff["ci_high"] and diff["interval"] == "paired_bootstrap"
+        assert diff["sd"] < np.hypot(a["sd"], h["sd"])
+    assert not t[t["electorate"] == "human"]["metric"].str.endswith("_minus_human").any()
+    # ranking-source electorates are compared with the human thermometer ballots too
+    r = t[(t["source"] == "ranking") & t["metric"].str.endswith("_minus_human")]
+    assert set(r["metric"]) == {"sp_deletion_share_minus_human"}
