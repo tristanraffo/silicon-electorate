@@ -87,36 +87,30 @@ def test_check_passes_on_the_fixture(config):
 
 
 def test_shipped_configs_list_their_todos_and_invent_no_codes():
-    c = anes.load_election("anes2024_ts")
-    # the three codes confirmed in SPEC §8, and nothing else
-    assert {k: v for k, v in c.candidates.items() if v != "TODO"} == {
-        "Kamala Harris": "V241156PRE",
-        "Robert F. Kennedy Jr.": "V241159PRE",
-        "Josh Shapiro": "V241160PRE",
-    }
-    problems = anes.check(c)
-    for expected in (
-        "TODO: weight_var",
-        "TODO: candidates.Donald Trump",
-        "TODO: persona_vars.party_id_7",
-        "TODO: question_text",
-    ):
-        assert expected in problems
-    assert sum(p.startswith("TODO: persona_vars.") for p in problems) == 10
-    assert not any("V241156PRE" in p for p in problems)  # known codes are not flagged as TODO
-
-    confirmed = {"V241156PRE", "V241159PRE", "V241160PRE"}
-    for election in ("anes2024_ts", "anes2016_ts", "anes2016_pilot"):
+    # 2024 and 2016 Time Series: filled from the documentation shipped with the data;
+    # Tristan pasted the question wording from the questionnaires.
+    for election, harris_or_clinton in (("anes2024_ts", "V241156"), ("anes2016_ts", "V161086")):
         c = anes.load_election(election)
-        assert c.id == election
-        codes = set(c.variables().values())
-        assert codes <= confirmed | {"TODO"}, f"{election} contains unverified codes"
-        assert c.question_text == "TODO" and c.value_labels == {}
-        assert anes.check(c)  # not ready
-        with pytest.raises(anes.ConfigError, match="not ready"):
-            anes.process(c)  # unknown codes fail loudly at runtime
-        with pytest.raises(anes.ConfigError):
-            anes.build(c, "unused")
+        assert harris_or_clinton in c.candidates.values()
+        assert "TODO" not in c.variables().values()
+        assert all(not code.endswith(("PRE", "POST")) for code in c.variables().values())
+        assert set(c.value_labels) == set(c.persona_vars) == set(anes.PERSONA_FIELDS)
+        assert "religious_attendance" in c.persona_fallbacks
+        assert c.question_text.endswith("How would you rate:")
+        assert "TODO" not in anes.check(c) and "\n" not in c.question_text
+
+    # 2016 pilot: also filled. Its documentation does not give the income labels, so that
+    # field is left out rather than guessed.
+    c = anes.load_election("anes2016_pilot")
+    assert c.candidates["Hillary Clinton"] == "fthrc" and "TODO" not in c.variables().values()
+    assert set(c.persona_vars) == set(anes.PERSONA_FIELDS) - {"income"}
+    assert set(c.value_labels) == set(c.persona_vars)
+    assert c.value_labels["age"][1997] == "19" and c.value_labels["age"][1921] == "95"
+    regions = set(c.value_labels["state_or_region"].values())
+    assert regions == {"the Northeast", "the Midwest", "the South", "the West"}
+    assert len(c.value_labels["state_or_region"]) == 51
+    assert c.question_text.endswith("How would you rate:")
+    assert not any(p.startswith("TODO") for p in anes.check(c))
 
 
 def test_check_reports_variables_missing_from_the_file(tmp_path):
@@ -155,10 +149,20 @@ def test_cli_data_check_and_build(tmp_path):
     ok = cli.invoke(app, ["data", "check", str(YAML)])
     assert ok.exit_code == 0 and "anes_synthetic: OK" in ok.output
 
-    todo = cli.invoke(app, ["data", "check", "anes2024_ts"])
+    unfilled = tmp_path / "unfilled.yaml"
+    data = yaml.safe_load(YAML.read_text())
+    data.update(file="TODO", weight_var="TODO")
+    data["candidates"]["Emery Evans"] = "TODO"
+    unfilled.write_text(yaml.safe_dump(data))
+    todo = cli.invoke(app, ["data", "check", str(unfilled)])
     assert todo.exit_code == 1  # non-zero
-    assert "TODO: weight_var" in todo.output and "TODO: candidates.Donald Trump" in todo.output
-    assert "data file not found" in todo.output
+    assert "TODO: weight_var" in todo.output and "TODO: candidates.Emery Evans" in todo.output
+    assert "TODO: file" in todo.output
+    missing = tmp_path / "missing.yaml"
+    data = yaml.safe_load(YAML.read_text())
+    data["file"] = str(tmp_path / "nowhere.csv")
+    missing.write_text(yaml.safe_dump(data))
+    assert "data file not found" in cli.invoke(app, ["data", "check", str(missing)]).output
 
     broken = tmp_path / "broken.yaml"
     data = yaml.safe_load(YAML.read_text())
@@ -172,7 +176,7 @@ def test_cli_data_check_and_build(tmp_path):
     assert built.exit_code == 0, built.output
     assert "rated fewer than 3 candidates: dropped" in built.output
     assert (tmp_path / "processed" / "anes_synthetic" / "human_scores.parquet").exists()
-    refused = cli.invoke(app, ["data", "build", "anes2024_ts", "--out", str(tmp_path / "p2")])
+    refused = cli.invoke(app, ["data", "build", str(unfilled), "--out", str(tmp_path / "p2")])
     assert refused.exit_code == 1 and "not ready" in refused.output
     assert not (tmp_path / "p2").exists()
 
@@ -321,7 +325,7 @@ def test_persona_text_is_first_person_and_omits_missing_fields(processed):
         f"{full['race_ethnicity']}. My highest level of education is {full['education']}. "
         f"My household income is {full['income']} a year. I live in {full['state_or_region']}. "
         f"Politically, I think of myself as {full['party_id_7']}. My political views are "
-        f"{full['ideology_7']}. I attend religious services {full['religious_attendance']}. "
+        f"{full['ideology_7']}. I {full['religious_attendance']}. "
         f"In the last presidential election, I {full['vote_prior']}."
     )
     # a respondent with a missing field simply has one sentence fewer
@@ -404,16 +408,52 @@ def test_runner_candidate_subsets_and_errors(tmp_path):
         resolve_election(
             anes_run(tmp_path, election={**election, "processed_dir": str(tmp_path / "x")})
         )
-    todo = {"source": "anes", "id": "anes2024_ts"}
+    # The raw data file is not needed for a run (it is never copied to the GPU box).
+    no_raw = tmp_path / "no_raw.yaml"
+    no_raw.write_text(yaml.safe_dump({**yaml.safe_load(YAML.read_text()), "file": "gone.csv"}))
+    moved = {**election, "config": str(no_raw)}
+    assert len(resolve_election(anes_run(tmp_path, election=moved)).respondents) == 377
+    with pytest.raises(anes.ConfigError, match="data file not found"):
+        anes.require_ready(anes.load_election(no_raw))
+
+    unfilled = tmp_path / "unfilled.yaml"
+    unfilled.write_text(yaml.safe_dump({**yaml.safe_load(YAML.read_text()), "weight_var": "TODO"}))
+    todo = {"source": "anes", "id": "anes_synthetic", "config": str(unfilled)}
     with pytest.raises(anes.ConfigError, match="not ready"):  # TODO codes stop a run cold
         resolve_election(anes_run(tmp_path, election=todo))
 
 
-def test_prod_example_config_is_valid_but_blocked_by_todos():
+def test_prod_example_config_is_valid_and_needs_built_data(tmp_path):
     from scv.runner import load_run_config
 
     cfg = load_run_config("configs/runs/prod_example.yaml")
     assert cfg.backend == "vllm" and cfg.limit_respondents == 300
     assert cfg.election.source == "anes" and cfg.election.id == "anes2024_ts"
-    with pytest.raises(anes.ConfigError, match="not ready"):
-        plan_run(cfg)
+    # Without processed tables it refuses to plan: "run scv data build" where the raw
+    # file is present, "not ready" (data file not found) on a checkout without data/raw.
+    election = cfg.election.model_copy(update={"processed_dir": str(tmp_path / "none")})
+    with pytest.raises(anes.ConfigError):
+        plan_run(cfg.model_copy(update={"election": election}))
+
+
+def test_persona_fallback_column_fills_only_where_the_first_gives_no_label(tmp_path):
+    # Two-step questions: the field's own column wins; the fallback column is consulted
+    # only where that gives no label, and only its listed codes produce one.
+    config = variant(tmp_path, persona_fallbacks={
+        "religious_attendance": {"var": "SYN_UNRELATED_1", "labels": {1: "never"}}
+    })  # fmt: skip
+    config.value_labels["religious_attendance"] = {1: "every week"}
+    assert anes.check(config) == []
+    got = anes.process(config).personas.set_index("respondent_id")["religious_attendance"]
+    raw = pd.read_csv(config.path).assign(rid=lambda d: d["SYN_ID"].astype(str)).set_index("rid")
+    raw = raw.loc[got.index]
+    first, second = raw["SYN_RELIG"] == 1, raw["SYN_UNRELATED_1"] == 1
+    assert (first & second).any() and (~first & second).any() and (~first & ~second).any()
+    assert (got[first] == "every week").all()
+    assert (got[~first & second] == "never").all()
+    assert got[~first & ~second].isna().all()
+
+    bad = variant(tmp_path, persona_fallbacks={"age": {"var": "SYN_NOPE", "labels": {1: "x"}}})
+    assert "variable not in data file: SYN_NOPE (persona_fallbacks.age)" in anes.check(bad)
+    stray = variant(tmp_path, persona_fallbacks={"zodiac": {"var": "SYN_AGE", "labels": {}}})
+    assert any("persona_fallbacks given for fields" in p for p in anes.check(stray))

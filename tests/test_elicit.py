@@ -511,3 +511,101 @@ def test_pairwise_table_needs_both_orders():
     calls = run_elicitation(config(modes=("pairwise",)), respondents, MockBackend(utilities), "m")
     with pytest.raises(ValueError, match="both presentation orders"):
         pairwise_table(calls.iloc[::2])
+
+
+def test_ranking_by_letter_maps_back_to_the_names_in_shown_order():
+    # Ranking prompt v3: candidates are shown as "A: name" and the model answers with
+    # letters. The letter is the position in *this call's* order, not a fixed code.
+    shown = ("Cy Diaz", "Ann Lee", "Bo Chen")
+    labels = ("A", "B", "C")
+    assert parse_ranking("B\nA=C", shown, labels) == WeakOrder(
+        (("Ann Lee",), ("Bo Chen", "Cy Diaz"))
+    )
+    assert parse_ranking("c\n a \nb", shown, labels) == WeakOrder(
+        (("Bo Chen",), ("Cy Diaz",), ("Ann Lee",))
+    )
+    # letter and name together, as shown in the prompt, and plain names, are accepted
+    assert parse_ranking("B: Ann Lee\nA: Cy Diaz\nC: Bo Chen", shown, labels) == WeakOrder(
+        (("Ann Lee",), ("Cy Diaz",), ("Bo Chen",))
+    )
+    assert parse_ranking("Ann Lee\nCy Diaz = Bo Chen", shown, labels) is not None
+    # still strict: a letter twice, a letter missing, an unknown letter, a wrong pairing,
+    # or a name that is not on the list
+    for bad in ("A\nB\nB", "A\nB", "A\nB\nD", "A: Ann Lee\nB\nC", "A\nB\nJoe Biden", "A=B=C=A"):
+        assert parse_ranking(bad, shown, labels) is None, bad
+    # without labels a bare letter is not a candidate
+    assert parse_ranking("B\nA\nC", shown) is None
+
+
+def test_ranking_prompt_shows_letters_in_the_per_call_order():
+    cfg = ElicitConfig(
+        election="e", candidates=("Ann Lee", "Bo Chen", "Cy Diaz"), question_text="Q"
+    )
+    calls = [c for c in plan_calls(cfg, [Respondent("r1", "I am 40 years old.")], "m")
+             if c.mode == "ranking"]  # fmt: skip
+    assert len({c.candidates_shown for c in calls}) > 1  # order varies between samples
+    for c in calls:
+        text = c.prompt.messages[-1][1]
+        lines = "\n".join(f"{a}: {n}" for a, n in zip("ABC", c.candidates_shown, strict=True))
+        assert f"Here are the 3 candidates, each with a letter:\n{lines}\n" in text
+        assert "(A, B, C)" in text and "A, B, C" in c.repair
+
+
+class LetterBackend(Backend):
+    """Answers every ranking with the letters in reverse order (last shown is best)."""
+
+    def info(self):
+        return {"model_id": "letters", "revision": None, "dtype": None, "backend": "fake"}
+
+    def generate(self, prompts, *, temperature, max_tokens, n, seed):
+        out = []
+        for p in prompts:
+            ranking = p.meta.get("mode") == "ranking"
+            out.append(["C\nB\nA" if ranking else "50"] * n)
+        return out
+
+    def next_token_logprobs(self, prompts, candidates):
+        return [{c: math.log(1 / len(candidates)) for c in candidates} for _ in prompts]
+
+
+def test_letter_answers_are_recorded_as_names_in_each_calls_own_order():
+    cfg = ElicitConfig(
+        election="e", candidates=("Ann Lee", "Bo Chen", "Cy Diaz"), question_text="Q"
+    )
+    people = [Respondent(f"r{i}", f"I am {30 + i} years old.") for i in range(6)]
+    table = ranking_table(run_elicitation(cfg, people, LetterBackend(), "m"))
+    assert table["parse_ok"].all() and len(table) == 6 * 4
+    assert len({tuple(s) for s in table["candidates_shown"]}) > 1
+    for shown, ballot in zip(table["candidates_shown"], table["ballot"], strict=True):
+        assert ballot == WeakOrder(tuple((c,) for c in reversed(list(shown))))
+
+
+def test_trial_ranking_formats_parse_and_run_configs_can_select_them():
+    from scv.runner import elicit_config, load_run_config
+
+    shown, labels = ("Cy Diaz", "Ann Lee", "Bo Chen"), ("A", "B", "C")
+    want = WeakOrder((("Ann Lee",), ("Bo Chen",), ("Cy Diaz",)))
+    assert parse_ranking("1st: B\n2nd: C\n3rd: A", shown, labels) == want  # slots form
+    assert parse_ranking("B > C > A", shown, labels) == want  # one line
+    assert parse_ranking("B > C = A", shown, labels) == WeakOrder(
+        (("Ann Lee",), ("Bo Chen", "Cy Diaz"))
+    )
+    assert parse_ranking("1st: B\n2nd: _\n3rd: A", shown, labels) is None  # blank left in
+
+    for name, marker in (
+        ("strict", "one per line"),
+        ("line", "separated by '>'"),
+        ("slots", "1st: _"),
+    ):
+        cfg = load_run_config(f"configs/runs/rank_trial_{name}.yaml")
+        assert cfg.prompts == {"ranking": f"ranking_v4_{name}"} and cfg.modes == ["ranking"]
+        ec = elicit_config(
+            cfg,
+            {"hf_id": "x"},
+            election=type("E", (), {"id": "e", "candidates": shown, "question_text": "Q"})(),
+        )
+        assert ec.templates.ranking.id == f"ranking_v4_{name}"
+        call = plan_calls(ec, [Respondent("r1", "I am 40 years old.")], "m")[0]
+        text = call.prompt.messages[-1][1]
+        assert marker in text and "{" not in text and "{" not in call.repair
+        assert all(w not in text.lower() for w in FORBIDDEN_WORDS)

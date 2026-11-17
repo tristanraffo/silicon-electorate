@@ -55,11 +55,11 @@ value_labels:
     6: conservative
     7: extremely conservative
   religious_attendance:
-    1: every week
-    2: almost every week
-    3: once or twice a month
-    4: a few times a year
-    5: never
+    1: attend religious services every week
+    2: attend religious services almost every week
+    3: attend religious services once or twice a month
+    4: attend religious services a few times a year
+    5: never attend religious services
   vote_prior:
     1: voted for the Democratic candidate
     2: voted for the Republican candidate

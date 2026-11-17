@@ -1,0 +1,15 @@
+# Ranking-prompt trial (DECISIONS.md G8): ranking mode only, 20 respondents, four models,
+# prompt variant "line". Compare with scripts/ranking_report.py. Not a results run.
+run_id: rank_trial_line
+seed: 20261116
+backend: vllm
+models: [llama31_8b, qwen25_7b, mistral_7b, gemma2_9b]
+election:
+  source: anes
+  id: anes2024_ts
+limit_respondents: 20
+modes: [ranking]
+ranking_n: 3
+batch_size: 256
+prompts:
+  ranking: ranking_v4_line

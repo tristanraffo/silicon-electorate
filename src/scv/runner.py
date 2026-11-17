@@ -263,6 +263,11 @@ class RunConfig(_Strict):
     results_dir: str = "results"
     backend_options: dict[str, Any] = Field(default_factory=dict)
     throughput: Throughput = Field(default_factory=Throughput)
+    # Prompt template ids to use instead of the defaults, e.g. {ranking: ranking_v4_slots}.
+    # Keys: persona, thermometer, ranking, pairwise (files in configs/prompts/).
+    prompts: dict[Literal["persona", "thermometer", "ranking", "pairwise"], str] = Field(
+        default_factory=dict
+    )
 
 
 def load_run_config(path: str | Path) -> RunConfig:
@@ -395,7 +400,7 @@ def resolve_election(cfg: RunConfig) -> ResolvedElection:
         raise ValueError(
             f"run config says election {spec.id!r} but {spec.config} is {election.id!r}"
         )
-    anes.require_ready(election)
+    anes.require_ready(election, data_file=False)  # a run reads the processed tables only
     candidates = tuple(spec.candidates or election.candidates)
     unknown = [c for c in candidates if c not in election.candidates]
     if unknown:
@@ -455,6 +460,7 @@ def elicit_config(
         ranking_n=cfg.ranking_n,
         sequential=cfg.sequential and not base,
         base_model=base,
+        templates=load_templates(**cfg.prompts),
     )
 
 

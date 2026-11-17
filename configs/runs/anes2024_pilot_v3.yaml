@@ -1,0 +1,25 @@
+# 2024 pilot, third attempt: same as prod_example.yaml but with the v3 (lettered) ranking prompt.
+# Before it can run:
+#   1. scv data check anes2024_ts   (must print OK; the ANES file goes in data/raw/)
+#   2. scv data build anes2024_ts
+#   3. scv elicit --config configs/runs/anes2024_pilot_v3.yaml --dry-run     <- always first
+# One persona is run on every model once; electorates are assembled afterwards.
+run_id: anes2024_pilot_v3         # v3 = ranking prompt v3 (DECISIONS.md G6)
+seed: 20261116
+backend: vllm
+models: [llama31_8b, qwen25_7b, mistral_7b, gemma2_9b]
+election:
+  source: anes
+  id: anes2024_ts
+limit_respondents: 300            # SPEC §14.5: pilot size before any full run
+modes: [thermometer, ranking, pairwise]
+thermometer_n: 5
+ranking_n: 3
+sequential: false                 # SPEC §14.1: independent thermometer calls
+flush_every: 500
+batch_size: 256
+prompts:
+  ranking: ranking_v3             # pinned: this run_id's log was made with v3
+throughput:                       # placeholders; calibrate from the pilot's latency_ms
+  prompt_tokens_per_s: 20000
+  output_tokens_per_s: 2500

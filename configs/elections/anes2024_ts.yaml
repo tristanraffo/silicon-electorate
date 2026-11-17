@@ -1,32 +1,99 @@
-# ANES 2024 Time Series. Codes marked TODO are unknown and must come from the codebook.
+# ANES 2024 Time Series (release 2026-05-19). Every code below was read from the user
+# guide/codebook shipped with the data file and checked against the CSV's columns.
+# The CSV column names carry no "PRE"/"POST" suffix (the codebook prints "V241156" and
+# then the label "PRE: FEELING THERMOMETER ..."). See DECISIONS.md, section "ANES 2024".
 # `scv data check anes2024_ts` lists everything still to fill in.
 id: anes2024_ts
-file: data/raw/anes_timeseries_2024_csv.csv     # Tristan: set the real filename
-weight_var: TODO
-id_var: null            # optional respondent-id column; null = row number in the file
-candidates:             # display name -> thermometer variable code
-  Kamala Harris: V241156PRE
-  Robert F. Kennedy Jr.: V241159PRE
-  Josh Shapiro: V241160PRE
-  Donald Trump: TODO
+file: data/raw/anes_timeseries_2024_csv_20260519.csv
+weight_var: V240107a    # pre-election full sample (fresh in-person + fresh web + panel) + PAPI
+id_var: V240001         # 2024 Time Series case ID
+candidates:             # display name -> pre-election thermometer variable
+  Kamala Harris: V241156
+  Robert F. Kennedy Jr.: V241159
+  Josh Shapiro: V241160
+  Donald Trump: V241157
+  # Also in the file (pre-election): Joe Biden V241158, Gretchen Whitmer V241161,
+  # Mark Kelly V241162, Roy Cooper V241163, J.D. Vance V241164, Tim Walz V241165.
 valid_range: [0, 100]   # everything else is missing (ANES uses negative codes and 998/999)
 min_rated: 3            # respondents rating fewer candidates are excluded (count is logged)
-persona_vars:           # all TODO until Tristan fills them in from the codebook
-  age: TODO
-  gender: TODO
-  race_ethnicity: TODO
-  education: TODO
-  income: TODO
-  state_or_region: TODO
-  party_id_7: TODO
-  ideology_7: TODO
-  religious_attendance: TODO
-  vote_prior: TODO
-# Optional: persona field -> {code: label}. Labels must read naturally inside the
-# sentences of configs/prompts/persona_v1.yaml, e.g.
-#   party_id_7: {1: a strong Democrat, 2: a not very strong Democrat, ...}
-#   vote_prior: {1: voted for Joe Biden, 2: voted for Donald Trump, 3: did not vote}
-# Rules: a field with no entry is used as is (negative codes = missing); with an entry,
-# unlisted codes are missing unless a "*": "{value}" key lets them through.
-value_labels: {}
-question_text: TODO     # the exact ANES thermometer wording, pasted from the questionnaire
+persona_vars:
+  age: V241458x                   # summary: age on election day, top-coded at 80
+  gender: V241551                 # "What is your gender?" (not asked on the paper form)
+  race_ethnicity: V241501x        # summary: self-identified race/ethnicity
+  education: V241465x             # summary: 5-category education
+  income: V241567x                # summary: household income, six categories (covers paper form)
+  state_or_region: V243007        # census region (state, V243002, is blank for the panel sample)
+  party_id_7: V241227x            # summary: party ID
+  ideology_7: V241177             # 7-point liberal-conservative self-placement
+  religious_attendance: V241440   # how often; asked only of those who ever attend
+  vote_prior: V241106x            # summary: recall of 2020 presidential vote
+# persona field -> {code: label}. Unlisted codes (refusals, don't know, inapplicable)
+# are missing and that sentence is left out of the persona.
+value_labels:
+  age: {80: "at least 80", "*": "{value}"}
+  gender: {1: a man, 2: a woman, 3: nonbinary}
+  race_ethnicity:
+    1: White
+    2: Black
+    3: Hispanic
+    4: Asian, Native Hawaiian or Pacific Islander
+    5: Native American, Alaska Native or another race
+    6: multiracial
+  education:
+    1: less than a high school diploma
+    2: a high school diploma
+    3: some college but no bachelor's degree
+    4: a bachelor's degree
+    5: a graduate degree
+  income:
+    1: under $10,000
+    2: $10,000 to $29,999
+    3: $30,000 to $59,999
+    4: $60,000 to $99,999
+    5: $100,000 to $249,999
+    6: $250,000 or more
+  state_or_region: {1: the Northeast, 2: the Midwest, 3: the South, 4: the West}
+  party_id_7:
+    1: a strong Democrat
+    2: a not very strong Democrat
+    3: an independent who leans Democratic
+    4: an independent
+    5: an independent who leans Republican
+    6: a not very strong Republican
+    7: a strong Republican
+  ideology_7:             # 99 "haven't thought much about this" is left out
+    1: extremely liberal
+    2: liberal
+    3: slightly liberal
+    4: moderate
+    5: slightly conservative
+    6: conservative
+    7: extremely conservative
+  religious_attendance:
+    1: attend religious services every week
+    2: attend religious services almost every week
+    3: attend religious services once or twice a month
+    4: attend religious services a few times a year
+    5: never attend religious services
+  vote_prior:
+    1: did not vote
+    2: voted for Joe Biden
+    3: voted for Donald Trump
+    4: voted for another candidate
+# A second column used where the field's own column gives no label. V241440 is only
+# asked of people who said they ever attend (V241439 = 1); those who said no are
+# "inapplicable" there.
+persona_fallbacks:
+  religious_attendance:
+    var: V241439          # "do you ever attend religious services?"
+    labels: {2: never attend religious services}
+# The thermometer introduction from the questionnaire. The candidate's name follows on
+# its own line in the prompt.
+question_text: >-
+  We would like to get your feelings toward some of our political leaders and other people who
+  are in the news these days. We will show the name of a person and we'd like you to rate that
+  person using something we call the feeling thermometer. Ratings between 50 degrees and 100
+  degrees mean that you feel favorable and warm toward the person. Ratings between 0 degrees and
+  50 degrees mean that you don't feel favorable toward the person and that you don't care too
+  much for that person. You would rate the person at the 50 degree mark if you don't feel
+  particularly warm or cold toward the person. How would you rate:

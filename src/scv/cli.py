@@ -71,6 +71,22 @@ def analyze(
     ] = 50,
     seed: Annotated[int, typer.Option(help="Seed for all resampling.")] = 0,
     no_figures: Annotated[bool, typer.Option("--no-figures", help="Tables only.")] = False,
+    exclude_ranking: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--exclude-ranking",
+            help="Sensitivity analysis: leave this model's ranking ballots out (repeatable). "
+            "Writes to results/metrics/<run_id>__ranking_without_<models>/.",
+        ),
+    ] = None,
+    ranking_ballot: Annotated[
+        str,
+        typer.Option(
+            "--ranking-ballot",
+            help="'greedy' (default) or 'combined': average each voter's rankings, which "
+            "cancels position bias. Writes to results/metrics/<run_id>__ranking_combined/.",
+        ),
+    ] = "greedy",
 ) -> None:
     """Compute every metric for a run: summary.csv, Parquet tables and three figures."""
     from scv.analysis import AnalysisOptions, analyze_run
@@ -78,7 +94,13 @@ def analyze(
     cfg = load_run_config(config)
     opts = AnalysisOptions(bootstrap=bootstrap, draws=draws, replicates=replicates, seed=seed)
     try:
-        out = analyze_run(cfg, opts, figures=not no_figures)
+        out = analyze_run(
+            cfg,
+            opts,
+            figures=not no_figures,
+            exclude_ranking=tuple(exclude_ranking or ()),
+            ranking_ballot=ranking_ballot,
+        )
     except (anes.ConfigError, ValueError) as e:
         typer.echo(f"ERROR: {e}", err=True)
         raise typer.Exit(code=1) from e

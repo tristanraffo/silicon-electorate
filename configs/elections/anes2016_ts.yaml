@@ -1,32 +1,133 @@
-# ANES 2016 Time Series. Every code is TODO. The candidate LIST is only a suggestion:
-# keep the people whose feeling thermometers are in the file, and add or remove names.
+# ANES 2016 Time Series (anes_timeseries_2016.sav). Every code below was read from the
+# variable and value labels stored in the data file itself and checked against its
+# value counts. See DECISIONS.md, section "ANES 2016".
+# `scv data check anes2016_ts` lists everything still to fill in.
 id: anes2016_ts
-file: TODO              # e.g. data/raw/<the 2016 time series file>.csv / .dta / .sav
-weight_var: TODO
-id_var: null
-candidates:
-  Hillary Clinton: TODO
-  Donald Trump: TODO
-  Gary Johnson: TODO
-  Jill Stein: TODO
+file: data/raw/anes_timeseries_2016.sav
+weight_var: V160101     # pre-election weight, full sample
+id_var: V160001         # 2016 case ID
+candidates:             # display name -> pre-election thermometer variable
+  Hillary Clinton: V161086    # "Democratic Presidential cand"
+  Donald Trump: V161087       # "Republican Presidential cand"
+  Gary Johnson: V161088       # "Libertarian Presidential cand"
+  Jill Stein: V161089         # "Green Party Presidential cand"
+  # Also in the file (pre-election): Democratic VP candidate V161090, Republican VP
+  # candidate V161091, previous President V161092, Bill Clinton V161093.
 valid_range: [0, 100]
 min_rated: 3
-persona_vars:           # all TODO until Tristan fills them in from the codebook
-  age: TODO
-  gender: TODO
-  race_ethnicity: TODO
-  education: TODO
-  income: TODO
-  state_or_region: TODO
-  party_id_7: TODO
-  ideology_7: TODO
-  religious_attendance: TODO
-  vote_prior: TODO
-# Optional: persona field -> {code: label}. Labels must read naturally inside the
-# sentences of configs/prompts/persona_v1.yaml, e.g.
-#   party_id_7: {1: a strong Democrat, 2: a not very strong Democrat, ...}
-#   vote_prior: {1: voted for Joe Biden, 2: voted for Donald Trump, 3: did not vote}
-# Rules: a field with no entry is used as is (negative codes = missing); with an entry,
-# unlisted codes are missing unless a "*": "{value}" key lets them through.
-value_labels: {}
-question_text: TODO     # the exact ANES thermometer wording, pasted from the questionnaire
+persona_vars:
+  age: V161267                    # top-coded at 90
+  gender: V161342                 # self-identified gender
+  race_ethnicity: V161310x        # summary: self-identified race
+  education: V161270              # highest level of education, 16 categories
+  income: V161361x                # pre income summary, 28 categories
+  state_or_region: V163003        # census region (as for 2024; state is V163001a)
+  party_id_7: V161158x            # summary: party ID
+  ideology_7: V161126             # 7-point liberal-conservative self-placement
+  religious_attendance: V161245   # how often; asked only of those who ever attend
+  vote_prior: V161006             # 2012 vote choice; asked only of those who voted
+# persona field -> {code: label}. Unlisted codes (refusals, don't know, inapplicable,
+# "other") are missing and that sentence is left out of the persona.
+value_labels:
+  age: {90: "at least 90", "*": "{value}"}
+  gender: {1: a man, 2: a woman}
+  race_ethnicity:         # NOT the 2024 order: here 3 is Asian and 5 is Hispanic
+    1: White
+    2: Black
+    3: Asian, Native Hawaiian or Pacific Islander
+    4: Native American or Alaska Native
+    5: Hispanic
+    6: another race or multiracial
+  education:
+    1: less than a high school diploma
+    2: less than a high school diploma
+    3: less than a high school diploma
+    4: less than a high school diploma
+    5: less than a high school diploma
+    6: less than a high school diploma
+    7: less than a high school diploma
+    8: less than a high school diploma
+    9: a high school diploma
+    10: some college but no degree
+    11: an associate degree
+    12: an associate degree
+    13: a bachelor's degree
+    14: a master's degree
+    15: a professional degree
+    16: a doctorate
+    90: a high school diploma   # "other", recoded by ANES as high school graduate
+  income:
+    1: "under $5,000"
+    2: "$5,000 to $9,999"
+    3: "$10,000 to $12,499"
+    4: "$12,500 to $14,999"
+    5: "$15,000 to $17,499"
+    6: "$17,500 to $19,999"
+    7: "$20,000 to $22,499"
+    8: "$22,500 to $24,999"
+    9: "$25,000 to $27,499"
+    10: "$27,500 to $29,999"
+    11: "$30,000 to $34,999"
+    12: "$35,000 to $39,999"
+    13: "$40,000 to $44,999"
+    14: "$45,000 to $49,999"
+    15: "$50,000 to $54,999"
+    16: "$55,000 to $59,999"
+    17: "$60,000 to $64,999"
+    18: "$65,000 to $69,999"
+    19: "$70,000 to $74,999"
+    20: "$75,000 to $79,999"
+    21: "$80,000 to $89,999"
+    22: "$90,000 to $99,999"
+    23: "$100,000 to $109,999"
+    24: "$110,000 to $124,999"
+    25: "$125,000 to $149,999"
+    26: "$150,000 to $174,999"
+    27: "$175,000 to $249,999"
+    28: "$250,000 or more"
+  state_or_region: {1: the Northeast, 2: the Midwest, 3: the South, 4: the West}
+  party_id_7:
+    1: a strong Democrat
+    2: a not very strong Democrat
+    3: an independent who leans Democratic
+    4: an independent
+    5: an independent who leans Republican
+    6: a not very strong Republican
+    7: a strong Republican
+  ideology_7:             # 99 "haven't thought much about this" is left out
+    1: extremely liberal
+    2: liberal
+    3: slightly liberal
+    4: moderate
+    5: slightly conservative
+    6: conservative
+    7: extremely conservative
+  religious_attendance:
+    1: attend religious services every week
+    2: attend religious services almost every week
+    3: attend religious services once or twice a month
+    4: attend religious services a few times a year
+    5: never attend religious services
+  vote_prior:
+    1: voted for Barack Obama
+    2: voted for Mitt Romney
+    5: voted for another candidate
+    6: did not vote
+# A second column used where the field's own column gives no label (two-step questions).
+persona_fallbacks:
+  religious_attendance:
+    var: V161244          # "do you ever attend religious services?"
+    labels: {2: never attend religious services}
+  vote_prior:
+    var: V161005          # "did you vote for President in 2012?"
+    labels: {2: did not vote}
+# The thermometer introduction from the questionnaire. The candidate's name follows on
+# its own line in the prompt.
+question_text: >-
+  We would like to get your feelings toward some of our political leaders and other people who
+  are in the news these days. We will show the name of a person and we'd like you to rate that
+  person using something we call the feeling thermometer. Ratings between 50 degrees and 100
+  degrees mean that you feel favorable and warm toward the person. Ratings between 0 degrees and
+  50 degrees mean that you don't feel favorable toward the person and that you don't care too
+  much for that person. You would rate the person at the 50 degree mark if you don't feel
+  particularly warm or cold toward the person. How would you rate:

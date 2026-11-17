@@ -102,7 +102,7 @@ def load_templates(
     directory: str | Path = PROMPTS_DIR,
     persona: str = "persona_v1",
     thermometer: str = "thermometer_v1",
-    ranking: str = "ranking_v1",
+    ranking: str = "ranking_v4_strict",
     pairwise: str = "pairwise_v1",
 ) -> Templates:
     d = Path(directory)

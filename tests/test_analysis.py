@@ -736,3 +736,116 @@ def test_h4_voter_coherence(exact, noisy, table):
 
     thermometer_only = noisy_calls[noisy_calls["mode"] == "thermometer"]
     assert analysis.voter_coherence(thermometer_only, table.candidates).empty
+
+
+def test_sensitivity_run_leaves_a_models_ranking_ballots_out(noisy, root):
+    """`scv analyze --exclude-ranking M`: M keeps its thermometer electorate, loses its
+    ranking electorate and its place in the mixed-model ranking electorate, and the
+    output goes to its own folder so the full analysis is untouched."""
+    small = AnalysisOptions(bootstrap=20, draws=20, replicates=4, sizes=(11, 25), seed=3)
+    full = analysis.read_outputs(analysis.analyze_run(noisy, small, figures=False))
+    out = analysis.analyze_run(noisy, small, figures=False, exclude_ranking=["mistral_7b"])
+    assert out.name == f"{noisy.run_id}__ranking_without_mistral_7b"
+    assert out != analysis.metrics_dir(noisy.results_dir, noisy.run_id)
+    sens = analysis.read_outputs(out)
+    m = sens["metrics"]
+    assert set(m["run_id"]) == {out.name}
+
+    def models(frame, source):
+        f = frame[(frame["kind"] == "homogeneous") & (frame["source"] == source)]
+        return set(f["model"])
+
+    assert models(m, "thermometer") == set(MODELS)
+    assert models(m, "ranking") == set(MODELS) - {"mistral_7b"}
+    assert models(full["metrics"], "ranking") == set(MODELS)
+    # the mixed-model ranking electorate still exists (two models are left)
+    key = ["electorate", "source", "weighting", "metric"]
+    mixed = lambda t: t[(t["kind"] == "heterogeneous") & (t["source"] == "ranking")]  # noqa: E731
+    assert len(mixed(m))
+    # everything that does not involve rankings is identical
+    keep = lambda t: t[t["source"] == "thermometer"].set_index(key)["value"]  # noqa: E731
+    pd.testing.assert_series_equal(keep(full["metrics"]), keep(m))
+    ranked = sens["matched"][sens["matched"]["tau_b_ranking"].notna()]["model"]
+    assert "mistral_7b" not in set(ranked)
+
+    with pytest.raises(ValueError, match="cannot exclude"):
+        analysis.analyze_run(noisy, small, figures=False, exclude_ranking=["nope"])
+    # with one ranking model left there is no mixed ranking electorate, and no crash
+    one = analysis.read_outputs(
+        analysis.analyze_run(
+            noisy, small, figures=False, exclude_ranking=["mistral_7b", "qwen25_7b"]
+        )
+    )["metrics"]
+    assert mixed(one).empty and models(one, "ranking") == {"llama31_8b"}
+
+
+def test_mixed_ranking_electorate_uses_only_models_that_have_ranking_ballots(table):
+    # The mock's greedy rankings are the same for every model, so give one model
+    # reversed rankings: the mixed ranking electorate must change when it is left out,
+    # and must equal a single model's electorate when only identical models remain.
+    import dataclasses
+
+    spoiled = {**table.llm_ranks, "mistral_7b": -table.llm_ranks["mistral_7b"]}
+    with_bad = dataclasses.replace(table, llm_ranks=spoiled)
+    without = dataclasses.replace(
+        table, llm_ranks={m: r for m, r in spoiled.items() if m != "mistral_7b"}
+    )
+    small = AnalysisOptions(bootstrap=10, draws=10, replicates=4, sizes=(11,), seed=3)
+
+    def value(tab, electorate, source="ranking"):
+        m = analysis.analyze(tab, "x", MODELS, small)["metrics"]
+        f = m[(m["electorate"] == electorate) & (m["source"] == source)]
+        return f[(f["metric"] == "sp_deletion_share") & (f["weighting"] == "weighted")]["value"]
+
+    bad, clean = float(value(with_bad, "heterogeneous").iloc[0]), value(without, "heterogeneous")
+    assert len(clean) == 1 and float(clean.iloc[0]) < bad - 0.02  # less to delete
+    assert float(clean.iloc[0]) == pytest.approx(float(value(without, "llama31_8b").iloc[0]))
+    # thermometer mixing still uses all three models
+    a = value(with_bad, "heterogeneous", "thermometer")
+    assert a.to_list() == value(without, "heterogeneous", "thermometer").to_list()
+
+
+def test_combined_ranking_ballot_averages_all_of_a_voters_rankings(noisy, root):
+    """`--ranking-ballot combined`: mean rank over the greedy and sampled rankings that
+    parsed; equal means are ties; a voter with no parsed ranking has an empty ballot."""
+    election = resolve_election(noisy)
+    calls = read_calls(noisy.results_dir, noisy.run_id)
+    # break one voter's greedy ranking and all of another voter's rankings
+    model = MODELS[0]
+    is_rank = (calls["mode"] == "ranking") & (calls["model_key"] == model)
+    voters = calls.loc[is_rank, "respondent_id"].unique()
+    one_bad = is_rank & (calls["respondent_id"] == voters[0]) & (calls["sample_idx"] == -1)
+    all_bad = is_rank & (calls["respondent_id"] == voters[1])
+    calls.loc[one_bad | all_bad, ["parsed", "parse_ok"]] = ["null", False]
+
+    args = (election.id, election.candidates, election.human_scores, calls, election.personas)
+    greedy = build_ballot_table(*args)
+    combined = build_ballot_table(*args, ranking_ballot="combined")
+    with pytest.raises(ValueError, match="ranking_ballot"):
+        build_ballot_table(*args, ranking_ballot="median")
+
+    cands = list(election.candidates)
+    from scv.elicit import ranking_table
+
+    rt = ranking_table(calls)
+    rt = rt[(rt["model_key"] == model) & rt["parse_ok"]]
+    ids = list(combined.respondent_ids)
+    for rid in (voters[0], voters[2], voters[3]):
+        mine = rt[rt["respondent_id"] == rid]["ballot"]
+        want = np.mean([[b.rank_of()[c] for c in cands] for b in mine], axis=0)
+        assert len(mine) == (3 if rid == voters[0] else 4)
+        np.testing.assert_allclose(combined.llm_ranks[model][ids.index(rid)], want, atol=1e-8)
+    assert np.isnan(combined.llm_ranks[model][ids.index(voters[1])]).all()
+    assert np.isnan(greedy.llm_ranks[model][ids.index(voters[0])]).all()  # greedy one is gone
+    # sampled rankings differ from the greedy one, so the two ballots are not the same
+    a, b = greedy.llm_ranks[MODELS[1]], combined.llm_ranks[MODELS[1]]
+    assert not np.allclose(a, b, equal_nan=True)
+    # thermometers are untouched
+    np.testing.assert_array_equal(greedy.llm_scores[model], combined.llm_scores[model])
+
+    small = AnalysisOptions(bootstrap=10, draws=10, replicates=3, sizes=(11,), seed=3)
+    out = analysis.analyze_run(noisy, small, figures=False, ranking_ballot="combined")
+    assert out.name == f"{noisy.run_id}__ranking_combined"
+    both = analysis.variant_id("r", ["m2", "m1"], "combined")
+    assert both == "r__ranking_combined__ranking_without_m1_m2"
+    assert set(analysis.read_outputs(out)["metrics"]["run_id"]) == {out.name}

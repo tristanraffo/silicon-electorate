@@ -43,6 +43,9 @@ class CharTokenizer:
         body = "".join(f"<{m['role']}>{m['content']}</{m['role']}>" for m in messages)
         return "\x02" + body + "<assistant>"  # \x02 plays the template's own BOS
 
+    def decode(self, ids):
+        return decode(ids)
+
     def __call__(self, text, add_special_tokens):
         ids, i = [], 0
         while i < len(text):
@@ -82,6 +85,7 @@ class FakeLLM:
         self.kwargs = kwargs
         self.calls = []
         self.logprob_table = {ord("1"): -0.2, ord("2"): -1.8, ord("x"): -3.0}
+        self.logprob_fn = None  # optional: prompt token ids -> {token id: logprob}
         self.answer = lambda text, params, k: f" sample{k}-seed{params.seed} "
         FakeLLM.instances.append(self)
 
@@ -95,7 +99,10 @@ class FakeLLM:
             text = decode(prompt["prompt_token_ids"])
             logprobs = None
             if getattr(params, "logprobs", None):
-                logprobs = [{t: SimpleNamespace(logprob=v) for t, v in self.logprob_table.items()}]
+                table = self.logprob_table
+                if self.logprob_fn:
+                    table = self.logprob_fn(prompt["prompt_token_ids"])
+                logprobs = [{t: SimpleNamespace(logprob=v) for t, v in table.items()}]
             # completions arrive out of order on purpose: the backend must sort by index
             samples = [
                 SimpleNamespace(index=k, text=self.answer(text, params, k), logprobs=logprobs)
@@ -143,6 +150,14 @@ def test_without_vllm_installed_the_import_fails_and_the_runner_explains(tmp_pat
     )
     with pytest.raises(BackendError, match="uv sync --extra gpu"):
         make_backend(cfg, "tiny", synthetic_respondents(2, 0))
+
+
+def test_context_length_is_capped_by_default(vllm_backend):
+    # Without a cap vLLM sizes its cache for the model's full context (131,072 tokens
+    # for Llama 3.1) and cannot start on a 24 GB card.
+    make(vllm_backend)
+    assert FakeLLM.instances[-1].kwargs["max_model_len"] == vllm_backend.DEFAULT_MAX_MODEL_LEN
+    assert vllm_backend.DEFAULT_MAX_MODEL_LEN == 4096
 
 
 def test_engine_is_loaded_with_model_dtype_revision_and_options(vllm_backend):
@@ -250,6 +265,34 @@ def test_a_label_outside_the_top_k_is_bounded_by_the_weakest_listed_token(vllm_b
     assert b.missing_label_count == 3
 
 
+def test_labels_are_read_after_a_leading_space_token(vllm_backend):
+    # Mistral writes a lone space token before its answer, so "1"/"2" are not among the
+    # first-token candidates. The first GPU runs recorded every such call as 50/50.
+    b = make(vllm_backend)
+    space = ord(" ")
+
+    def table(ids):
+        if ids[-1] == space:  # the space has been appended: now the labels show up
+            return {ord("1"): -2.3, ord("2"): -0.1, ord("x"): -5.0}
+        return {space: -0.01, ord("x"): -6.0, ord("y"): -7.0}
+
+    FakeLLM.instances[-1].logprob_fn = table
+    out = b.next_token_logprobs([ChatPrompt.user("q1"), ChatPrompt.user("q2")], ["1", "2"])
+    z = math.log(math.exp(-2.3) + math.exp(-0.1))
+    assert out == [pytest.approx({"1": -2.3 - z, "2": -0.1 - z})] * 2
+    assert b.leading_space_count == 2 and b.missing_label_count == 0
+    first, second = FakeLLM.instances[-1].calls[-2:]
+    assert [i["prompt_token_ids"][-1] for i in second[0]] == [space, space]
+    assert all(i["prompt_token_ids"][-1] != space for i in first[0])
+
+
+def test_many_unreadable_pairwise_answers_stop_the_run(vllm_backend):
+    b = make(vllm_backend)
+    FakeLLM.instances[-1].logprob_table = {ord("x"): -1.0, ord("y"): -2.0}  # never a label
+    with pytest.raises(BackendError, match="no answer label"):
+        b.next_token_logprobs([ChatPrompt.user(f"q{i}") for i in range(40)], ["1", "2"])
+
+
 def test_labels_must_be_single_tokens_and_chat_models_need_a_template(vllm_backend):
     b = make(vllm_backend)  # "1" / "2" checked at startup
     b.check_labels(["1", "2"])
@@ -300,7 +343,7 @@ def test_full_elicitation_runs_through_the_vllm_path(vllm_backend):
 
     def answer(text, params, k):
         question = text.rsplit("<user>", 1)[-1]
-        if "Rank these candidates" in question:
+        if "Rank all 3 candidates" in question:
             listed = sorted(cands, key=question.index)
             return "\n".join(listed)
         return "64"

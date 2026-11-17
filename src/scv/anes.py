@@ -45,6 +45,21 @@ class ConfigError(ValueError):
     """An election config is incomplete (TODOs) or does not match its data file."""
 
 
+class Fallback(BaseModel):
+    """A second column consulted when a persona field's own column gives no label.
+
+    For questions asked in two steps: e.g. "how often do you attend" is only asked of
+    people who said they ever attend, so those who said no are "inapplicable" there and
+    their answer is in the filter question's column. Only codes listed in ``labels``
+    produce a label.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    var: str
+    labels: dict[Any, str]
+
+
 class ElectionConfig(BaseModel):
     """One ``configs/elections/*.yaml`` file."""
 
@@ -61,6 +76,8 @@ class ElectionConfig(BaseModel):
     persona_vars: dict[str, str]
     # persona field -> {code: label}. See `label_value` for the rules.
     value_labels: dict[str, dict[Any, str]] = Field(default_factory=dict)
+    # persona field -> second column used where the first gives no label (see Fallback).
+    persona_fallbacks: dict[str, Fallback] = Field(default_factory=dict)
     question_text: str
 
     @property
@@ -75,6 +92,8 @@ class ElectionConfig(BaseModel):
             out["id_var"] = self.id_var
         out.update({f"candidates.{name}": code for name, code in self.candidates.items()})
         out.update({f"persona_vars.{name}": code for name, code in self.persona_vars.items()})
+        fallbacks = self.persona_fallbacks.items()
+        out.update({f"persona_fallbacks.{name}": f.var for name, f in fallbacks})
         return out
 
 
@@ -113,10 +132,14 @@ def _columns(path: Path) -> list[str]:
     return list(meta.column_names)
 
 
-def check(config: ElectionConfig) -> list[str]:
+def check(config: ElectionConfig, data_file: bool = True) -> list[str]:
     """Every problem that stops this election from being processed: each TODO, a missing
     data file, each configured variable absent from the file, and config slips. An empty
-    list means it is ready."""
+    list means it is ready.
+
+    ``data_file=False`` skips the checks against the raw data file. A run only needs the
+    processed tables, and the raw ANES file is deliberately not copied to the GPU box.
+    """
     problems = []
     todo_vars = set()
     for where, code in config.variables().items():
@@ -133,6 +156,9 @@ def check(config: ElectionConfig) -> list[str]:
     stray = sorted(set(config.value_labels) - set(config.persona_vars))
     if stray:
         problems.append(f"value_labels given for fields not in persona_vars: {stray}")
+    stray = sorted(set(config.persona_fallbacks) - set(config.persona_vars))
+    if stray:
+        problems.append(f"persona_fallbacks given for fields not in persona_vars: {stray}")
     if len(config.candidates) < 3:
         problems.append("fewer than 3 candidates")
     if not 1 <= config.min_rated <= max(1, len(config.candidates)):
@@ -142,7 +168,7 @@ def check(config: ElectionConfig) -> list[str]:
     if dupes:
         problems.append(f"variable codes used more than once: {dupes}")
 
-    if config.file.strip() != TODO:
+    if data_file and config.file.strip() != TODO:
         if not config.path.exists():
             problems.append(f"data file not found: {config.path}")
         else:
@@ -157,8 +183,8 @@ def check(config: ElectionConfig) -> list[str]:
     return problems
 
 
-def require_ready(config: ElectionConfig) -> None:
-    problems = check(config)
+def require_ready(config: ElectionConfig, data_file: bool = True) -> None:
+    problems = check(config, data_file=data_file)
     if problems:
         raise ConfigError(
             f"election {config.id!r} is not ready ({len(problems)} problems):\n  "
@@ -282,7 +308,12 @@ def process(config: ElectionConfig) -> Processed:
     for field in PERSONA_FIELDS:
         if field in config.persona_vars:
             labels = config.value_labels.get(field)
-            personas[field] = [label_value(v, labels) for v in raw[config.persona_vars[field]]]
+            values = [label_value(v, labels) for v in raw[config.persona_vars[field]]]
+            fallback = config.persona_fallbacks.get(field)
+            if fallback is not None:
+                second = [label_value(v, fallback.labels) for v in raw[fallback.var]]
+                values = [a if a is not None else b for a, b in zip(values, second, strict=True)]
+            personas[field] = values
     for field in config.persona_vars:
         missing = int(personas[field].isna().sum())
         logger.info("%s: persona field %s missing for %d respondents", config.id, field, missing)

@@ -1,0 +1,25 @@
+# Full ranking (SPEC §10.2), version 3. {candidate_lines} is one candidate per line as
+# "A: name", in the per-call randomised order; {n} is how many there are and {letters}
+# is "A, B, C, D". The model answers with letters, which the parser maps back to names.
+#
+# History (DECISIONS.md G4, G6), from 20-respondent GPU pilots on 2026-11-16:
+#   v1 "Rank these candidates from most to least preferred. Ties are allowed; ..."
+#      Models added non-candidates, left candidates out, numbered lines, used commas.
+#   v2 named the count and said "each name exactly once ... do not add anyone else".
+#      Formatting became clean, but models still wrote "Joe Biden" in place of one of
+#      the candidates. Greedy parse rate: Llama 100%, Qwen 85%, Mistral 65%, Gemma 65%.
+#   v3 answers by letter, so a name that is not on the list cannot be written.
+id: ranking_v3
+max_tokens: 48
+user: |-
+  The following is how a survey respondent describes themselves:
+
+  "{persona}"
+
+  Answer the survey question below exactly as this person would.
+
+  Here are the {n} candidates, each with a letter:
+  {candidate_lines}
+
+  Rank all {n} candidates from most preferred to least preferred. Give your best estimate even if you are unsure. Answer with the letters only ({letters}), using each letter exactly once. Write one rank per line, most preferred first. If candidates are tied, write their letters on the same line separated by '='. Output nothing else.
+repair: "Please output only the letters {letters}: each exactly once, one rank per line, most preferred first, tied letters on the same line separated by '='. Nothing else."

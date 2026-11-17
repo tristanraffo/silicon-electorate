@@ -1,0 +1,19 @@
+# Full ranking (SPEC §10.2), trial variant "strict": one letter per line, no ties.
+# THE DEFAULT ranking prompt since 2026-11-16 (DECISIONS.md G8, G10): in the GPU trial it
+# was the only format whose greedy ranking parsed for all 20 respondents on all four
+# pool models. Lettered options as in v3; the answer is a strict order, so ties cannot
+# be expressed in this mode (thermometer ballots still carry them).
+id: ranking_v4_strict
+max_tokens: 48
+user: |-
+  The following is how a survey respondent describes themselves:
+
+  "{persona}"
+
+  Answer the survey question below exactly as this person would.
+
+  Here are the {n} candidates, each with a letter:
+  {candidate_lines}
+
+  Rank all {n} candidates from most preferred to least preferred. Give your best estimate even if you are unsure. Answer with the letters only ({letters}): write all {n} letters, one per line, most preferred first, using each letter exactly once. Output nothing else.
+repair: "Please output all {n} letters ({letters}), one per line, most preferred first, each exactly once. Nothing else."

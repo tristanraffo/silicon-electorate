@@ -11,6 +11,7 @@ versions are reported alongside (SPEC §14.3).
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 from collections.abc import Sequence
@@ -432,12 +433,13 @@ def analyze(
     if len(pool) >= 2:
         for source in SOURCES:
             have = table.llm_scores if source == "thermometer" else table.llm_ranks
-            if all(m in have for m in pool):
+            mix = [m for m in pool if m in have]  # a model may have no ballots of a source
+            if len(mix) >= 2:
                 makers.append(
                     (
                         "heterogeneous",
                         source,
-                        lambda rng, r, s=source: heterogeneous(table, pool, s, rng, r),
+                        lambda rng, r, s=source, p=mix: heterogeneous(table, p, s, rng, r),
                     )
                 )
     else:
@@ -815,13 +817,40 @@ def read_outputs(out_dir: str | Path) -> dict[str, pd.DataFrame]:
 # --------------------------------------------------------------------------------------
 
 
-def analyze_run(cfg: Any, opts: AnalysisOptions | None = None, figures: bool = True) -> Path:
+def variant_id(
+    run_id: str, exclude_ranking: Sequence[str] = (), ranking_ballot: str = "greedy"
+) -> str:
+    """Name of an analysis variant: the run id, plus the ranking ballot if it is not the
+    greedy one, plus the models whose ranking ballots were left out."""
+    name = run_id
+    if ranking_ballot != "greedy":
+        name += f"__ranking_{ranking_ballot}"
+    if exclude_ranking:
+        name += f"__ranking_without_{'_'.join(sorted(exclude_ranking))}"
+    return name
+
+
+def analyze_run(
+    cfg: Any,
+    opts: AnalysisOptions | None = None,
+    figures: bool = True,
+    exclude_ranking: Sequence[str] = (),
+    ranking_ballot: str = "greedy",
+) -> Path:
     """Analyse one finished (or partly finished) run and write
     ``results/metrics/<run_id>/``: the Parquet tables, ``summary.csv`` and the figures.
 
     The heterogeneous electorate mixes the run's models that are in the ``pool`` section
     of models.yaml (SPEC §14.4 keeps the training-stage checkpoints out); if the run has
     none of those, it mixes all of the run's chat models.
+
+    ``exclude_ranking`` is a sensitivity analysis: the named models' *ranking* ballots
+    are left out, so they have no ranking electorate, no ranking matched comparison, and
+    no part in the mixed-model ranking electorate. Their thermometer ballots are kept.
+    ``ranking_ballot="combined"`` uses the average of each voter's rankings instead of
+    the greedy one (see ``build_ballot_table``). Either variant writes to its own folder
+    (see ``variant_id``), which is also the ``run_id`` written in its tables, so the
+    default analysis is never overwritten.
     """
     from scv import runner
     from scv.electorates import build_ballot_table
@@ -833,23 +862,38 @@ def analyze_run(cfg: Any, opts: AnalysisOptions | None = None, figures: bool = T
             f"run {cfg.run_id!r} has no call log in {cfg.results_dir}; run `scv elicit`"
         )
     table = build_ballot_table(
-        election.id, election.candidates, election.human_scores, calls, election.personas
+        election.id,
+        election.candidates,
+        election.human_scores,
+        calls,
+        election.personas,
+        ranking_ballot=ranking_ballot,
     )
+    unknown = sorted(set(exclude_ranking) - set(table.llm_ranks))
+    if unknown:
+        raise ValueError(
+            f"cannot exclude {unknown}: models with ranking ballots in run {cfg.run_id!r} "
+            f"are {sorted(table.llm_ranks)}"
+        )
+    if exclude_ranking:
+        kept = {m: r for m, r in table.llm_ranks.items() if m not in set(exclude_ranking)}
+        table = dataclasses.replace(table, llm_ranks=kept)
+    label = variant_id(cfg.run_id, exclude_ranking, ranking_ballot)
     registry = runner.load_models(cfg.models_file)
     in_run = [m for m in cfg.models if m in table.models]
     pool = [m for m in in_run if registry.get(m, {}).get("section") == "pool"]
     if len(pool) < 2:
         pool = [m for m in in_run if not registry.get(m, {}).get("base", False)]
-    tables = analyze(table, cfg.run_id, pool, opts)
+    tables = analyze(table, label, pool, opts)
     coherence = voter_coherence(calls[calls["election"] == election.id], election.candidates)
-    extra = pd.DataFrame(coherence_metrics(coherence, table, cfg.run_id))
+    extra = pd.DataFrame(coherence_metrics(coherence, table, label))
     if len(extra):
         tables["metrics"] = pd.concat(
             [tables["metrics"], extra.reindex(columns=tables["metrics"].columns)],
             ignore_index=True,
         )
     tables["coherence"] = coherence
-    out = write_outputs(tables, metrics_dir(cfg.results_dir, cfg.run_id))
+    out = write_outputs(tables, metrics_dir(cfg.results_dir, label))
     if figures:
         write_figures(tables, out)
     return out

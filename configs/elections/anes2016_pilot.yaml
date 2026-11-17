@@ -1,33 +1,221 @@
-# ANES 2016 Pilot Study. Every code is TODO. The candidate LIST is only a suggestion:
-# keep the people whose feeling thermometers are in the file, and add or remove names.
+# ANES 2016 Pilot Study (anes_pilot_2016.csv; YouGov, fielded January 22-28, 2016).
+# Every column name below was read from the codebook and questionnaire shipped with the
+# data and checked against the CSV. See DECISIONS.md, section "ANES 2016 Pilot".
+# `scv data check anes2016_pilot` lists everything still to fill in.
 id: anes2016_pilot
-file: TODO
-weight_var: TODO
-id_var: null
-candidates:
-  Hillary Clinton: TODO
-  Bernie Sanders: TODO
-  Donald Trump: TODO
-  Ted Cruz: TODO
-  Marco Rubio: TODO
-valid_range: [0, 100]
+file: data/raw/anes_pilot_2016.csv
+weight_var: weight      # "Case weight" (mean 1); weight_spss is the same weight rescaled
+id_var: caseid
+candidates:             # display name -> feeling thermometer column
+  Hillary Clinton: fthrc
+  Bernie Sanders: ftsanders
+  Donald Trump: fttrump
+  Ted Cruz: ftcruz
+  Marco Rubio: ftrubio
+  # Also in the file: Barack Obama ftobama, Jeb Bush ftjeb, Ben Carson ftcarson,
+  # Carly Fiorina ftfiorina.
+valid_range: [0, 100]   # 998 = skipped
 min_rated: 3
-persona_vars:           # all TODO until Tristan fills them in from the codebook
-  age: TODO
-  gender: TODO
-  race_ethnicity: TODO
-  education: TODO
-  income: TODO
-  state_or_region: TODO
-  party_id_7: TODO
-  ideology_7: TODO
-  religious_attendance: TODO
-  vote_prior: TODO
-# Optional: persona field -> {code: label}. Labels must read naturally inside the
-# sentences of configs/prompts/persona_v1.yaml, e.g.
-#   party_id_7: {1: a strong Democrat, 2: a not very strong Democrat, ...}
-#   vote_prior: {1: voted for Joe Biden, 2: voted for Donald Trump, 3: did not vote}
-# Rules: a field with no entry is used as is (negative codes = missing); with an entry,
-# unlisted codes are missing unless a "*": "{value}" key lets them through.
-value_labels: {}
-question_text: TODO     # the exact ANES thermometer wording, pasted from the questionnaire
+persona_vars:
+  age: birthyr                    # birth year; turned into an age by value_labels
+  gender: gender
+  race_ethnicity: race
+  education: educ
+  # income: faminc                # NOT USED: the documentation gives only four of its
+  #                               # value labels (3, 5, 7, 11). See DECISIONS.md P4.
+  state_or_region: state          # FIPS state code; turned into a census region below
+  party_id_7: pid7
+  ideology_7: lcself              # 7-point self-placement asked in the pilot itself
+  religious_attendance: pew_churatd
+  vote_prior: vote12              # asked only of those who (probably) voted in 2012
+# persona field -> {code: label}. Unlisted codes (not sure, don't know, skipped,
+# not asked) are missing and that sentence is left out of the persona.
+value_labels:
+  age:                    # 2016 minus birth year (the survey ran in January 2016)
+    1921: "95"
+    1922: "94"
+    1923: "93"
+    1924: "92"
+    1925: "91"
+    1926: "90"
+    1927: "89"
+    1928: "88"
+    1929: "87"
+    1930: "86"
+    1931: "85"
+    1932: "84"
+    1933: "83"
+    1934: "82"
+    1935: "81"
+    1936: "80"
+    1937: "79"
+    1938: "78"
+    1939: "77"
+    1940: "76"
+    1941: "75"
+    1942: "74"
+    1943: "73"
+    1944: "72"
+    1945: "71"
+    1946: "70"
+    1947: "69"
+    1948: "68"
+    1949: "67"
+    1950: "66"
+    1951: "65"
+    1952: "64"
+    1953: "63"
+    1954: "62"
+    1955: "61"
+    1956: "60"
+    1957: "59"
+    1958: "58"
+    1959: "57"
+    1960: "56"
+    1961: "55"
+    1962: "54"
+    1963: "53"
+    1964: "52"
+    1965: "51"
+    1966: "50"
+    1967: "49"
+    1968: "48"
+    1969: "47"
+    1970: "46"
+    1971: "45"
+    1972: "44"
+    1973: "43"
+    1974: "42"
+    1975: "41"
+    1976: "40"
+    1977: "39"
+    1978: "38"
+    1979: "37"
+    1980: "36"
+    1981: "35"
+    1982: "34"
+    1983: "33"
+    1984: "32"
+    1985: "31"
+    1986: "30"
+    1987: "29"
+    1988: "28"
+    1989: "27"
+    1990: "26"
+    1991: "25"
+    1992: "24"
+    1993: "23"
+    1994: "22"
+    1995: "21"
+    1996: "20"
+    1997: "19"
+  gender: {1: a man, 2: a woman}
+  race_ethnicity:         # 7 "Other" is left out
+    1: White
+    2: Black
+    3: Hispanic
+    4: Asian
+    5: Native American
+    6: multiracial
+    8: Middle Eastern
+  education:
+    1: less than a high school diploma
+    2: a high school diploma
+    3: some college
+    4: a two-year college degree
+    5: a four-year college degree
+    6: a postgraduate degree
+  state_or_region:        # census region of each state, as in the two Time Series files
+    1: the South
+    2: the West
+    4: the West
+    5: the South
+    6: the West
+    8: the West
+    9: the Northeast
+    10: the South
+    11: the South
+    12: the South
+    13: the South
+    15: the West
+    16: the West
+    17: the Midwest
+    18: the Midwest
+    19: the Midwest
+    20: the Midwest
+    21: the South
+    22: the South
+    23: the Northeast
+    24: the South
+    25: the Northeast
+    26: the Midwest
+    27: the Midwest
+    28: the South
+    29: the Midwest
+    30: the West
+    31: the Midwest
+    32: the West
+    33: the Northeast
+    34: the Northeast
+    35: the West
+    36: the Northeast
+    37: the South
+    38: the Midwest
+    39: the Midwest
+    40: the South
+    41: the West
+    42: the Northeast
+    44: the Northeast
+    45: the South
+    46: the Midwest
+    47: the South
+    48: the South
+    49: the West
+    50: the Northeast
+    51: the South
+    53: the West
+    54: the South
+    55: the Midwest
+    56: the West
+  party_id_7:             # 8 "Not sure" is left out
+    1: a strong Democrat
+    2: a not very strong Democrat
+    3: an independent who leans Democratic
+    4: an independent
+    5: an independent who leans Republican
+    6: a not very strong Republican
+    7: a strong Republican
+  ideology_7:             # the pilot's own wording, not the Time Series scale
+    1: very liberal
+    2: somewhat liberal
+    3: closer to liberal than conservative
+    4: neither liberal nor conservative
+    5: closer to conservative than liberal
+    6: somewhat conservative
+    7: very conservative
+  religious_attendance:   # 7 "Don't know" is left out
+    1: attend religious services more than once a week
+    2: attend religious services once a week
+    3: attend religious services once or twice a month
+    4: attend religious services a few times a year
+    5: seldom attend religious services
+    6: never attend religious services
+  vote_prior:
+    1: voted for Mitt Romney
+    2: voted for Barack Obama
+    3: voted for another candidate
+# A second column used where the field's own column gives no label (two-step questions).
+persona_fallbacks:
+  vote_prior:
+    var: turnout12        # 2 = "Definitely did not vote" in 2012
+    labels: {2: did not vote}
+# The thermometer introduction from the questionnaire. The candidate's name follows on
+# its own line in the prompt.
+question_text: >-
+  We'd like to get your feelings toward some of our political leaders and other people who are
+  in the news these days. We'll show the name of a person or group and we'd like you to rate
+  that person or group using something we call the feeling thermometer. Ratings between 50
+  degrees and 100 degrees mean that you feel favorable and warm toward the person. Ratings
+  between 0 degrees and 50 degrees mean that you don't feel favorable toward the person and that
+  you don't care too much for that person. You would rate the person at the 50 degree mark if
+  you don't feel particularly warm or cold toward the person. How would you rate:

@@ -14,14 +14,17 @@ def test_shipped_templates_load_and_carry_the_spec_wording():
     assert (t.persona.id, t.thermometer.id, t.ranking.id, t.pairwise.id) == (
         "persona_v1",
         "thermometer_v1",
-        "ranking_v1",
+        "ranking_v4_strict",
         "pairwise_v1",
     )
-    assert (
-        "Rank these candidates from most to least preferred. Ties are allowed; write tied "
-        "candidates on the same line separated by '='. Output only the ranking, one line "
-        "per rank." in t.ranking["user"]
+    rank = t.ranking.render(
+        "user", persona="P", candidate_lines="A: X\nB: Y\nC: Z", n="3", letters="A, B, C"
     )
+    assert "Here are the 3 candidates, each with a letter:\nA: X\nB: Y\nC: Z\n" in rank
+    assert "Rank all 3 candidates from most preferred to least preferred." in rank
+    assert "write all 3 letters, one per line, most preferred first" in rank
+    assert "using each letter exactly once" in rank and "=" not in rank  # strict order
+    assert "all 2 letters (A, B)" in t.ranking.render("repair", letters="A, B", n="2")
     pair = t.pairwise.render("user", persona="P", first="X", second="Y")
     assert "Which do you prefer?\n1: X\n2: Y\nAnswer with 1 or 2." in pair
     assert t.pairwise["labels"] == ["1", "2"]
@@ -77,7 +80,7 @@ def test_persona_is_first_person_and_drops_missing_fields():
             "state_or_region": "Ohio",
             "party_id_7": "a strong Democrat",
             "ideology_7": "slightly liberal",
-            "religious_attendance": "almost every week",
+            "religious_attendance": "attend religious services almost every week",
             "vote_prior": "voted for Joe Biden",
         },
     )

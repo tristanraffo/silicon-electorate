@@ -18,6 +18,7 @@ import itertools
 import json
 import math
 import re
+import string
 import time
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -265,6 +266,17 @@ def _plan_thermometer(config: ElicitConfig, r: Respondent, model_key: str) -> li
     return calls
 
 
+_ORDINALS = ("1st", "2nd", "3rd", "4th", "5th", "6th", "7th")
+
+
+def _render(template: Any, key: str, available: Mapping[str, str]) -> str:
+    """Fill ``template[key]`` with the values it names (ranking templates differ in which
+    of persona / n / letters / candidate_lines / slots they use). An unknown placeholder
+    is a KeyError."""
+    wanted = {name for _, name, _, _ in string.Formatter().parse(template[key]) if name}
+    return template.render(key, **{name: available[name] for name in wanted})
+
+
 def _plan_ranking(config: ElicitConfig, r: Respondent, model_key: str) -> list[Call]:
     t = config.templates.ranking
     calls = []
@@ -277,7 +289,15 @@ def _plan_ranking(config: ElicitConfig, r: Respondent, model_key: str) -> list[C
             "ranking",
             s,
         )
-        text = t.render("user", persona=r.persona, candidate_lines="\n".join(order))
+        letters = RANK_LABELS[: len(order)]
+        fill = {
+            "persona": r.persona,
+            "n": str(len(order)),
+            "letters": ", ".join(letters),
+            "candidate_lines": "\n".join(f"{a}: {c}" for a, c in zip(letters, order, strict=True)),
+            "slots": "\n".join(f"{o}: _" for o in _ORDINALS[: len(order)]),
+        }
+        text = _render(t, "user", fill)
         calls.append(
             Call(
                 election=config.election,
@@ -292,7 +312,7 @@ def _plan_ranking(config: ElicitConfig, r: Respondent, model_key: str) -> list[C
                 seed=derive_seed(config.run_seed, config.election, r.respondent_id, "ranking", s),
                 prompt_hash=config.prompt_hash("ranking"),
                 prompt=ChatPrompt.user(text, respondent_id=r.respondent_id, mode="ranking"),
-                repair=t["repair"],
+                repair=_render(t, "repair", fill),
             )
         )
     return calls
@@ -332,8 +352,11 @@ def _plan_pairwise(config: ElicitConfig, r: Respondent, model_key: str) -> list[
 # Parsing
 # --------------------------------------------------------------------------------------
 
+#: Letters shown next to the candidates in a ranking prompt, by position.
+RANK_LABELS = tuple("ABCDEFG")
+
 _INT = re.compile(r"(?<![\d.])\d+(?![\d])")
-_LEADING_MARK = re.compile(r"^\s*(?:\(?\d+[.):]|[-*•])\s*")
+_LEADING_MARK = re.compile(r"^\s*(?:\(?\d+(?:st|nd|rd|th)?[.):]|[-*•])\s*")
 
 
 def parse_thermometer(text: str) -> int | None:
@@ -345,13 +368,22 @@ def parse_thermometer(text: str) -> int | None:
     return None
 
 
-def parse_ranking(text: str, candidates: Sequence[str]) -> WeakOrder | None:
+def parse_ranking(
+    text: str, candidates: Sequence[str], labels: Sequence[str] | None = None
+) -> WeakOrder | None:
     """Parse a ranking, one rank per line, ties joined by ``=`` (SPEC §10.2).
 
     Tolerates list markers ("1.", "-"), ``>`` as a rank separator and differences in
     case. Returns ``None`` unless every candidate appears exactly once and nothing else does.
+
+    ``labels`` are the letters shown next to the candidates, in the same order. An item
+    may then be the letter, the name, or the two together as shown ("B: Ann Lee").
     """
     lookup = {c.casefold(): c for c in candidates}
+    for label, c in zip(labels or (), candidates, strict=bool(labels)):
+        lookup[label.casefold()] = c
+        for sep in (": ", ". ", ") ", " - ", " "):
+            lookup[f"{label}{sep}{c}".casefold()] = c
     groups: list[list[str]] = []
     for line in re.split(r"[\n>]", text):
         line = _LEADING_MARK.sub("", line).strip()
@@ -374,7 +406,8 @@ def _parse(call: Call, text: str) -> Any:
     """Parsed value in its call-log form (JSON-serialisable), or ``None`` on failure."""
     if call.mode == "thermometer":
         return parse_thermometer(text)
-    ballot = parse_ranking(text, call.candidates_shown)
+    labels = RANK_LABELS[: len(call.candidates_shown)]
+    ballot = parse_ranking(text, call.candidates_shown, labels)
     return None if ballot is None else [list(g) for g in ballot.groups]
 
 

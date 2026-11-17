@@ -5,7 +5,7 @@
 #   age: "45"            gender: "a man"          race_ethnicity: "White"
 #   education: "a bachelor's degree"              income: "$50,000 to $59,999"
 #   state_or_region: "Ohio"                       party_id_7: "a strong Democrat"
-#   ideology_7: "slightly conservative"           religious_attendance: "every week"
+#   ideology_7: "slightly conservative"           religious_attendance: "attend religious services every week"
 #   vote_prior: "voted for Joe Biden"
 id: persona_v1
 joiner: " "
@@ -18,5 +18,5 @@ sentences:
   - {field: state_or_region, text: "I live in {state_or_region}."}
   - {field: party_id_7, text: "Politically, I think of myself as {party_id_7}."}
   - {field: ideology_7, text: "My political views are {ideology_7}."}
-  - {field: religious_attendance, text: "I attend religious services {religious_attendance}."}
+  - {field: religious_attendance, text: "I {religious_attendance}."}
   - {field: vote_prior, text: "In the last presidential election, I {vote_prior}."}

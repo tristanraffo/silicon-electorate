@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 #: Top-k next-token log-probs requested for pairwise calls (SPEC §9).
 LOGPROBS_K = 20
 
+#: Context length the engine is sized for unless ``max_model_len`` is given. vLLM
+#: otherwise reserves cache for the model's full context (131,072 tokens for
+#: Llama 3.1, 16 GiB) and refuses to start on a 24 GB card. Prompts here are a few
+#: hundred tokens; a longer one is rejected by vLLM with an error, never truncated.
+DEFAULT_MAX_MODEL_LEN = 4096
+
 
 def _is_oom(e: BaseException) -> bool:
     return "out of memory" in str(e).lower() or type(e).__name__ == "OutOfMemoryError"
@@ -37,7 +43,8 @@ class VLLMBackend(Backend):
     ``dtype`` defaults to bfloat16. ``base=True`` marks a base model with no chat
     template (completion prompts only, SPEC §10.4). ``tokenizer`` can be injected for
     tests; otherwise the model's Hugging Face tokenizer is loaded. Any other keyword
-    (e.g. ``gpu_memory_utilization``, ``max_model_len``) is passed to ``vllm.LLM``.
+    (e.g. ``gpu_memory_utilization``, ``max_model_len``) is passed to ``vllm.LLM``;
+    ``max_model_len`` defaults to ``DEFAULT_MAX_MODEL_LEN``.
     """
 
     def __init__(
@@ -54,6 +61,8 @@ class VLLMBackend(Backend):
         self.base = base
         self.dtype = dtype or "bfloat16"
         self.missing_label_count = 0  # pairwise calls where a label fell outside the top k
+        self.leading_space_count = 0  # pairwise calls read one token later (see below)
+        engine_kwargs.setdefault("max_model_len", DEFAULT_MAX_MODEL_LEN)
         try:
             if tokenizer is None:
                 from transformers import AutoTokenizer
@@ -163,6 +172,53 @@ class VLLMBackend(Backend):
         if any(p.is_completion != completion for p in prompts):
             raise BackendError("cannot mix chat and completion prompts in one batch")
         label_ids = self._label_ids(tuple(candidates), completion=completion)
+        inputs = self._inputs(prompts)
+        tops = self._first_token_logprobs(inputs)
+
+        # Some models (Mistral) start the answer with a lone whitespace token, so no label
+        # is among the first-token candidates. Where that happens, append that token and
+        # read the labels at the next position instead.
+        redo = []
+        for i, top in enumerate(tops):
+            if top and not any(tid in top for tid in label_ids):
+                best = max(top, key=top.get)
+                if not self.tokenizer.decode([best]).strip():
+                    redo.append((i, best))
+        if redo:
+            self.leading_space_count += len(redo)
+            again = self._first_token_logprobs(
+                [{"prompt_token_ids": [*inputs[i]["prompt_token_ids"], tid]} for i, tid in redo]
+            )
+            for (i, _), top in zip(redo, again, strict=True):
+                tops[i] = top
+
+        result, unread = [], 0
+        for top in tops:
+            floor = min(top.values()) if top else 0.0
+            raw = []
+            for tid in label_ids:
+                if tid not in top:
+                    # Outside the top k: its true log-prob is at most the k-th best.
+                    self.missing_label_count += 1
+                raw.append(top.get(tid, floor))
+            unread += all(tid not in top for tid in label_ids)
+            result.append(dict(zip(candidates, _log_normalise(raw), strict=True)))
+        if unread > max(1, len(prompts) // 20):
+            # Recording these as 50/50 would look like data. Stop instead.
+            raise BackendError(
+                f"{self.hf_id!r}: no answer label ({', '.join(candidates)}) among the top "
+                f"{LOGPROBS_K} next tokens for {unread} of {len(prompts)} pairwise prompts. "
+                "The model is not answering with a bare label; its pairwise choices cannot "
+                "be read from next-token log-probs with this prompt."
+            )
+        if unread:
+            logger.warning(
+                "no answer label in the top %d tokens for %d call(s)", LOGPROBS_K, unread
+            )
+        return result
+
+    def _first_token_logprobs(self, inputs: list[dict[str, list[int]]]) -> list[dict[int, float]]:
+        """``{token_id: logprob}`` of the top next tokens after each prompt."""
         params = [
             SamplingParams(
                 n=1,
@@ -174,26 +230,12 @@ class VLLMBackend(Backend):
                 logprobs=LOGPROBS_K,
                 seed=0,
             )
-            for _ in prompts
+            for _ in inputs
         ]
-        outputs = self._run(self._inputs(prompts), params)
-        result = []
-        for out in outputs:
-            top = out.outputs[0].logprobs[0]  # first generated token: {token_id: Logprob}
-            found = {tid: _value(lp) for tid, lp in top.items()}
-            floor = min(found.values()) if found else 0.0
-            raw = []
-            for tid in label_ids:
-                if tid not in found:
-                    # Outside the top k: its true log-prob is at most the k-th best.
-                    self.missing_label_count += 1
-                raw.append(found.get(tid, floor))
-            if all(tid not in found for tid in label_ids):
-                logger.warning(
-                    "no answer label in the top %d tokens for a pairwise call", LOGPROBS_K
-                )
-            result.append(dict(zip(candidates, _log_normalise(raw), strict=True)))
-        return result
+        outputs = self._run(inputs, params)
+        return [
+            {tid: _value(lp) for tid, lp in out.outputs[0].logprobs[0].items()} for out in outputs
+        ]
 
 
 def _value(logprob: Any) -> float:

@@ -1,0 +1,17 @@
+# Full ranking (SPEC §10.2), trial variant "line": all letters on one line separated by '>', '=' for ties.
+# Trial variant, not the default (DECISIONS.md G8, G10: ranking_v4_strict won). Lettered
+# options as in v3; only the answer format differs.
+id: ranking_v4_line
+max_tokens: 48
+user: |-
+  The following is how a survey respondent describes themselves:
+
+  "{persona}"
+
+  Answer the survey question below exactly as this person would.
+
+  Here are the {n} candidates, each with a letter:
+  {candidate_lines}
+
+  Rank all {n} candidates from most preferred to least preferred. Give your best estimate even if you are unsure. Answer on a single line with all {n} letters ({letters}), most preferred first, separated by '>'. Use each letter exactly once. If candidates are tied, put '=' between them instead of '>'. Output nothing else.
+repair: "Please answer on a single line with all {n} letters ({letters}), most preferred first, separated by '>' (or '=' between tied candidates), each letter exactly once. Nothing else."

@@ -26,6 +26,7 @@ from scv.nulls import as_rng, impartial_culture, permutation_null
 from scv.rules import Profile, _dense_ranks
 
 SOURCES = ("thermometer", "ranking")
+RANKING_BALLOTS = ("greedy", "combined")
 
 
 @dataclass(frozen=True)
@@ -62,14 +63,23 @@ def build_ballot_table(
     human_scores: pd.DataFrame,
     calls: pd.DataFrame,
     personas: pd.DataFrame | None = None,
+    ranking_ballot: str = "greedy",
 ) -> BallotTable:
     """Line up the human score table with the call log of a run.
 
     Respondents are those that appear in the call log (a pilot covers a subset), in the
     order of ``human_scores``. A thermometer score is the median of the sampled answers
-    (SPEC §10.1). The ranking ballot is the **greedy** ranking; the sampled rankings stay
-    in the call log.
+    (SPEC §10.1).
+
+    ``ranking_ballot`` chooses the ranking ballot. ``"greedy"`` (default) is the greedy
+    ranking alone; the sampled rankings stay in the call log. ``"combined"`` averages
+    each candidate's rank over all of the voter's rankings that parsed (the greedy one
+    and the sampled ones). Every ranking call lists the candidates in a different random
+    order, so averaging cancels much of a model's position bias; candidates with the
+    same average rank are tied.
     """
+    if ranking_ballot not in RANKING_BALLOTS:
+        raise ValueError(f"ranking_ballot must be one of {RANKING_BALLOTS}, not {ranking_ballot!r}")
     candidates = tuple(candidates)
     calls = calls[calls["election"] == election]
     ran = set(calls["respondent_id"].astype(str))
@@ -91,13 +101,19 @@ def build_ballot_table(
 
     llm_ranks: dict[str, np.ndarray] = {}
     ranks = ranking_table(calls)
-    ranks = ranks[ranks["sample_idx"] == GREEDY]
+    if ranking_ballot == "greedy":
+        ranks = ranks[ranks["sample_idx"] == GREEDY]
     for model, g in ranks.groupby("model_key", sort=False):
-        mat = np.full((len(ids), len(candidates)), np.nan)
+        total = np.zeros((len(ids), len(candidates)))
+        count = np.zeros(len(ids))
         for rid, ballot in zip(g["respondent_id"], g["ballot"], strict=True):
             if rid in row and ballot is not None:
                 for cand, r in ballot.rank_of().items():
-                    mat[row[rid], col[cand]] = r
+                    total[row[rid], col[cand]] += r
+                count[row[rid]] += 1
+        with np.errstate(invalid="ignore"):
+            mat = np.round(total / count[:, None], 9)  # rounded so equal means are ties
+        mat[count == 0] = np.nan  # no ranking parsed: an empty ballot
         llm_ranks[model] = mat
 
     strata = np.full(len(ids), "", dtype=object)

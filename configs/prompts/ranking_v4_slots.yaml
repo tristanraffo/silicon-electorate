@@ -1,0 +1,19 @@
+# Full ranking (SPEC §10.2), trial variant "slots": a form with one blank per rank, no ties.
+# Trial variant, not the default (DECISIONS.md G8, G10: ranking_v4_strict won). Lettered
+# options as in v3; only the answer format differs.
+id: ranking_v4_slots
+max_tokens: 48
+user: |-
+  The following is how a survey respondent describes themselves:
+
+  "{persona}"
+
+  Answer the survey question below exactly as this person would.
+
+  Here are the {n} candidates, each with a letter:
+  {candidate_lines}
+
+  Rank all {n} candidates from most preferred to least preferred. Give your best estimate even if you are unsure. Answer by copying the form below and replacing each blank with one letter ({letters}), using each letter exactly once. Output nothing else.
+
+  {slots}
+repair: "Please copy the form and replace each blank with one letter ({letters}), each letter exactly once. Nothing else."

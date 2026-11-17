@@ -8,15 +8,16 @@ Read `SPEC.md` first. This file is enough to resume from a fresh session.
 uv sync && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
-All three must be green (225 tests, about 40 s; no model is loaded). The real-model
+All three must be green (237 tests, about 45 s; no model is loaded). The real-model
 smoke test is opt-in:
 
 ```bash
 uv run pytest -m hf -s
 ```
 
-**All seven milestones (M1–M7) are built.** What remains is real data and a real GPU
-run; see "What Tristan has to do" and "Not yet verified" below.
+**All seven milestones (M1–M7) are built, and the first real runs are done** (three
+elections, 300 respondents each, four models, on a rented GPU). See "Where things stand"
+below. `DECISIONS.md` sections C, S, P, Q and G record everything decided on 2026-11-16.
 
 ## Done
 
@@ -90,27 +91,69 @@ run; see "What Tristan has to do" and "Not yet verified" below.
   - Acceptance: `tests/test_analysis.py::test_scv_analyze_writes_summary_and_three_figures`
     runs `scv analyze` on a mock-generated run over the synthetic ANES fixture.
 
-## What Tristan has to do before real data runs
+## Where things stand (2026-11-16, end of the build window)
 
-1. Put the ANES file in `data/raw/` and set `file:` in the election YAML.
-2. Fill every `TODO` (weight, thermometer codes, persona variables, exact question
-   text) and write `value_labels` that read naturally in `configs/prompts/persona_v1.yaml`.
-   Optionally set `id_var`. `tests/fixtures/anes_synthetic.yaml` is a complete example.
-3. `uv run scv data check <election>` until it prints OK, then `uv run scv data build <election>`.
+**Data.** The three ANES files are in `data/raw/` and the processed tables in
+`data/processed/` (both gitignored): 5,375 respondents for 2024, 3,415 for the 2016 Time
+Series, 1,199 for the 2016 Pilot. The election configs are complete (`scv data check`
+prints OK). Rebuild with `uv run scv data build <election>` after changing one.
 
-## Not yet verified (do these before trusting results)
+**Runs** (call logs in `results/calls/`, gitignored, complete, `remaining = 0`):
 
-1. **vLLM on a GPU** has never run (`DECISIONS.md` V1, V2, V4, V7). Follow the README
-   runbook; start with the 20-respondent pilot and check parse rates and
-   `missing_label_count`.
-2. **Real ANES data** has never been loaded: every test uses the synthetic fixture.
-3. **Prompt wording** (E1) and the **sampling settings** (E6) should be reviewed before the
-   first paid run; changing a template afterwards changes every call key.
-4. **Dry-run throughput** defaults are placeholders (U9); calibrate from the pilot.
-5. Full-scale timing of `scv analyze` (n ≈ 5,000, m = 7, B = 1,000, R = 50) has not been
-   measured; the replicated electorates are the slow part (about 1.3 s per draw for the
-   single-peakedness matrix). Use `--replicates 10` for a first look.
-6. Decisions flagged ⚑ in `DECISIONS.md`: R6, R14, D7, E1, E6, A2, A5, V1/V2/V4/V7, M6.
+| run_id | config | election |
+|---|---|---|
+| `anes2024_pilot_v4` | `configs/runs/prod_example.yaml` | 2024 Time Series |
+| `anes2016_ts_300_v4` | `configs/runs/anes2016_ts_300_v4.yaml` | 2016 Time Series |
+| `anes2016_pilot_300_v4` | `configs/runs/anes2016_pilot_300_v4.yaml` | 2016 Pilot |
+
+Each: 300 respondents (stratified on party ID), Llama 3.1 8B, Qwen 2.5 7B, Mistral 7B,
+Gemma 2 9B, thermometer + ranking + pairwise. Older logs (`anes2024_pilot_v1`–`v3`,
+`rank_trial_*`) are prompt trials; do not use them for results.
+
+**Analyses** (in `results/metrics/`, each run at `--replicates 10`): the default
+(`<run_id>/`) and the combined-ranking variant (`<run_id>__ranking_combined/`) for all
+three, plus `anes2024_pilot_v4__ranking_without_mistral_7b/` (made before the pairwise
+repair; its `h4_*` rows for Mistral are stale).
+
+**What was verified on the GPU:** the vLLM backend end to end; thermometer parse rate
+99.8–100%; pairwise readable for all four models after the Mistral fix (G13; under 2.5%
+of answers are exactly 50/50); greedy ranking parse rate 97.7–100% except Mistral
+(85–98%).
+
+**What to keep in mind when reading results**
+1. Thermometer-source results are the reliable ones. Ranking ballots have position
+   effects (G14): across the three runs Llama and Qwen rank later-listed candidates
+   higher (correlation of list position with rank −0.27 to −0.60), Mistral earlier-listed
+   ones in two runs (+0.25, +0.30), Gemma about none. `--ranking-ballot combined` (G15)
+   is the mitigation; it also introduces ties in about a third of ballots.
+   `uv run python scripts/ranking_report.py <run_id> ...` prints these numbers.
+2. Ranking ballots are strict orders (no ties) by design of the prompt (G10).
+3. 2016 Time Series respondents are those who rated at least three of Clinton, Trump,
+   Johnson, Stein (855 of 4,270 dropped, S2). 2016 Pilot personas have no income (P4).
+4. The models strongly associate the 2024 race with Joe Biden (G7).
+5. All models were trained after both elections.
+
+## Next steps for Tristan
+
+1. Destroy the vast.ai instance if it still exists.
+2. Commit the work of 2026-11-16 (configs, prompts, backend fixes, scripts, tests).
+3. Go through the ⚑ decisions in `DECISIONS.md` and confirm or change each: R6, R14, D7,
+   E1, E6, A2, A5, M6 (from the build); C1, C2, C4, S2, P2, P4, P5 (data); Q3 (question
+   wording unverified for the two Time Series); G4, G6, G7, G8, G10, G11, G13, G14, G15
+   (GPU runs). Changing a prompt, a persona label or a candidate set means a new
+   `run_id` and a rerun.
+4. Look at the results: `notebooks/01_results.ipynb` reads `results/metrics/*/`.
+5. Re-run the analyses at full settings (drop `--replicates 10`; B = 1,000, R = 50) once
+   the choices in step 3 are settled. Timing at full scale is still unmeasured.
+6. Decide on scale: these are 300-respondent pilots (SPEC §14.5). A full run is the same
+   config without `limit_respondents` (about 18 times the calls for 2024).
+7. Not yet run at all: the training-stage models in `configs/models/models.yaml` (the
+   OLMo checkpoints, including a base model that uses the plain-completion prompts, which
+   have never met a GPU), and candidate-subset runs for H2. Both are new `run_id`s with
+   no new code; start each with a 20-respondent pilot and the ranking report.
+8. Dry-run time estimates still use placeholder speeds (U9).
+
+Rules that still hold (SPEC §0): no analysis prose or paper from the assistant.
 
 ## Possible follow-ups (not in the spec's milestones)
 

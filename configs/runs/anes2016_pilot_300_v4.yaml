@@ -1,0 +1,21 @@
+# anes2016_pilot, 300 respondents, four pool models, all modes. Same settings and prompts as
+# configs/runs/prod_example.yaml (the 2024 run), so the three elections are comparable.
+run_id: anes2016_pilot_300_v4          # use a new run_id whenever prompts or models change
+seed: 20261116
+backend: vllm
+models: [llama31_8b, qwen25_7b, mistral_7b, gemma2_9b]
+election:
+  source: anes
+  id: anes2016_pilot
+limit_respondents: 300            # SPEC §14.5: pilot size before any full run
+modes: [thermometer, ranking, pairwise]
+thermometer_n: 5
+ranking_n: 3
+sequential: false                 # SPEC §14.1: independent thermometer calls
+flush_every: 500
+batch_size: 256
+prompts:
+  ranking: ranking_v4_strict      # pinned, so this run_id always means this prompt
+throughput:                       # placeholders; calibrate from the pilot's latency_ms
+  prompt_tokens_per_s: 20000
+  output_tokens_per_s: 2500
