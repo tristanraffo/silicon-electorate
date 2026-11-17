@@ -259,10 +259,41 @@ def test_a_label_outside_the_top_k_is_bounded_by_the_weakest_listed_token(vllm_b
     assert lp == pytest.approx({"1": -0.1 - z, "2": -6.0 - z})
     assert b.missing_label_count == 1 and math.exp(lp["1"]) > 0.99
 
-    FakeLLM.instances[-1].logprob_table = {ord("x"): -1.0, ord("y"): -2.0}
-    (lp,) = b.next_token_logprobs([ChatPrompt.user("q")], ["1", "2"])
-    assert lp == pytest.approx({"1": math.log(0.5), "2": math.log(0.5)})  # no information
-    assert b.missing_label_count == 3
+    assert b.unreadable_count == 0
+
+
+def test_an_occasional_unreadable_answer_is_none_not_fifty_fifty(vllm_backend):
+    # Gemma sometimes refuses a pairwise question: no label among the top tokens. That
+    # answer must come back as None (a failed call), and must not stop the run.
+    b = make(vllm_backend)
+    refused = {"q3", "q7"}
+
+    def table(ids):
+        if any(q in decode(ids) for q in refused):
+            return {ord("x"): -0.5, ord("y"): -1.0}
+        return {ord("1"): -0.3, ord("2"): -1.5}
+
+    FakeLLM.instances[-1].logprob_fn = table
+    out = b.next_token_logprobs([ChatPrompt.user(f"q{i}") for i in range(10)], ["1", "2"])
+    assert [i for i, lp in enumerate(out) if lp is None] == [3, 7]
+    assert all(lp["1"] > lp["2"] for lp in out if lp is not None)
+    assert b.unreadable_count == 2 and b.missing_label_count == 0
+
+
+def test_unreadable_share_threshold(vllm_backend):
+    b = make(vllm_backend)
+
+    def batch(n_bad, n):
+        bad = {f"q{i}|" for i in range(n_bad)}
+        FakeLLM.instances[-1].logprob_fn = lambda ids: (
+            {ord("x"): -0.5} if any(q in decode(ids) for q in bad) else {ord("1"): -0.1}
+        )
+        return b.next_token_logprobs([ChatPrompt.user(f"q{i}|") for i in range(n)], ["1", "2"])
+
+    assert sum(lp is None for lp in batch(15, 256)) == 15  # the batch that stopped the run
+    assert sum(lp is None for lp in batch(5, 10)) == 5  # half: still logged, not stopped
+    with pytest.raises(BackendError, match="6 of 10 pairwise prompts"):
+        batch(6, 10)
 
 
 def test_labels_are_read_after_a_leading_space_token(vllm_backend):

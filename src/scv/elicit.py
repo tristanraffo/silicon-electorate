@@ -518,7 +518,7 @@ def execute(
                 c,
                 info,
                 raw_text="",
-                parsed=math.exp(lp["1"]),
+                parsed=None if lp is None else math.exp(lp["1"]),  # None = unreadable
                 logprobs=lp,
                 retries=0,
                 latency_ms=latency,
@@ -683,6 +683,18 @@ def ranking_table(calls: pd.DataFrame) -> pd.DataFrame:
     return df[cols].reset_index(drop=True)
 
 
+def unreadable_pairwise(df: pd.DataFrame) -> pd.Series:
+    """Pairwise calls whose answer could not be read: logged as failed (``parse_ok``
+    False), or, in vLLM logs written before 2026-11-17, recorded as exactly 50/50 because
+    neither label was among the top next tokens. Only the vLLM backend ever wrote such a
+    placeholder, and a real vLLM answer of exactly 0.5 does not occur with float
+    log-probs; the mock backend does give exact 50/50 answers for tied utilities, which
+    are real (DECISIONS.md G19)."""
+    p1 = _values(df).map(lambda v: np.nan if v is None else float(v))
+    legacy = (df["backend"] == "vllm") & ((p1 - 0.5).abs() < 1e-12)
+    return ~df["parse_ok"].astype(bool) | legacy
+
+
 def pairwise_table(calls: pd.DataFrame) -> pd.DataFrame:
     """One row per (election, model, respondent, unordered pair a, b).
 
@@ -692,13 +704,17 @@ def pairwise_table(calls: pd.DataFrame) -> pd.DataFrame:
     """
     df = calls[calls["mode"] == "pairwise"].copy()
     df["p1"] = _values(df).astype(float)
+    df.loc[unreadable_pairwise(df), "p1"] = np.nan
     df[["a", "b"]] = df["target"].str.split(PAIR_SEP, expand=True, regex=False)
     df["a_first"] = [
         shown[0] == a for shown, a in zip(df["candidates_shown"], df["a"], strict=True)
     ]
-    wide = df.pivot_table(index=[*_ID, "a", "b"], columns="a_first", values="p1", sort=False)
-    if set(wide.columns) != {True, False} or wide.isna().any().any():
+    key = [*_ID, "a", "b"]
+    orders = df.groupby(key, sort=False)["a_first"].agg(["nunique", "size"])
+    if len(df) and ((orders["nunique"] != 2) | (orders["size"] != 2)).any():
         raise ValueError("pairwise calls must include both presentation orders for every pair")
+    wide = df.set_index([*key, "a_first"])["p1"].unstack("a_first")
+    wide = wide.reindex(columns=[True, False])
     out = wide.rename(columns={True: "p1_a_first", False: "p1_b_first"}).reset_index()
     out.columns.name = None
     out["p_a_over_b"] = 0.5 * (out["p1_a_first"] + (1.0 - out["p1_b_first"]))
@@ -713,7 +729,10 @@ def pairwise_coherence(
 ) -> dict[str, float]:
     """Per-voter H4 metrics from pairwise probabilities ``p[(a, b)] = p(a > b)``.
 
-    Each unordered pair needs one entry (either orientation). Returns
+    Each unordered pair needs one entry (either orientation). A pair whose probability
+    is NaN (the answer could not be read in at least one presentation order) is left
+    out: triples containing it are not counted, nor is it in the ranking agreement.
+    Returns
 
     - ``n_triples`` and ``wst_violations``: the number of candidate triples in which weak
       stochastic transitivity fails for some ordering (p(a>b) >= .5 and p(b>c) >= .5 but
@@ -730,7 +749,14 @@ def pairwise_coherence(
             return float(p[(a, b)])
         return 1.0 - float(p[(b, a)])
 
-    triples = list(itertools.combinations(candidates, 3))
+    def known(a: str, b: str) -> bool:
+        return not math.isnan(prob(a, b))
+
+    triples = [
+        t
+        for t in itertools.combinations(candidates, 3)
+        if all(known(a, b) for a, b in itertools.combinations(t, 2))
+    ]
     wst = cycles = 0
     for trio in triples:
         orderings = list(itertools.permutations(trio))
@@ -746,7 +772,7 @@ def pairwise_coherence(
         decided = [
             (a, b)
             for a, b in itertools.combinations(candidates, 2)
-            if a in rank and b in rank and rank[a] != rank[b]
+            if a in rank and b in rank and rank[a] != rank[b] and known(a, b)
         ]
         if decided:
             agree = sum(

@@ -93,6 +93,10 @@ uv run scv elicit --config configs/runs/full/anes2016_pilot_full_v4.yaml 2>&1 | 
 Detach from tmux with `Ctrl-b` then `d`. If anything stops a run, give the same command
 again: finished calls are skipped.
 
+A few unreadable pairwise answers (a model refusing to pick) are logged as failed calls
+and do not stop the run; the run stops only if more than half of a batch is unreadable
+(DECISIONS G19).
+
 **4. Check before leaving the instance:**
 
 ```bash
@@ -132,6 +136,12 @@ for c in anes2024_ts_full_v4 anes2016_ts_full_v4 anes2016_pilot_full_v4; do uv r
 
 ```bash
 for c in anes2024_ts_full_v4 anes2016_ts_full_v4 anes2016_pilot_full_v4; do uv run scv analyze --config configs/runs/full/$c.yaml --ranking-ballot combined; done
+```
+
+Tie-robustness variants (DECISIONS G20, G21), needed before reading H1:
+
+```bash
+for c in anes2024_ts_full_v4 anes2016_ts_full_v4 anes2016_pilot_full_v4; do for t in break_random drop_flat; do uv run scv analyze --config configs/runs/full/$c.yaml --ties $t; done; done
 ```
 
 Each output folder contains `analysis_settings.json`, which records the options, the

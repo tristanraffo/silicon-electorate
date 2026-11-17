@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from scv.elicit import GREEDY, ranking_table
+from scv.elicit import GREEDY, ranking_table, unreadable_pairwise
 from scv.runner import read_calls
 
 
@@ -70,10 +70,9 @@ def report(run_id: str, results: str = "results", examples: int = 4) -> None:
     print(pd.DataFrame(rows).round(3).to_string(index=False))
     pair = calls[calls["mode"] == "pairwise"]
     if len(pair):
-        # A pairwise answer of exactly 0.5 means neither label was read (see G13).
-        flat = (pair["parsed"].map(float) - 0.5).abs() < 1e-9
-        share = flat.groupby(pair["model_key"]).mean().round(3)
-        print("  pairwise answers that are exactly 50/50 (should be ~0):", share.to_dict())
+        # Failed calls, plus (in older logs) answers recorded as exactly 50/50; see G19.
+        share = unreadable_pairwise(pair).groupby(pair["model_key"]).mean().round(3)
+        print("  pairwise answers unreadable (left out of H4; should be small):", share.to_dict())
     failed = calls[(calls["mode"] == "ranking") & (~calls["parse_ok"])]
     for model, g in failed.groupby("model_key", sort=True):
         for idx, text in g[["sample_idx", "raw_text"]].head(examples).itertuples(index=False):

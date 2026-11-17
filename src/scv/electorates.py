@@ -15,6 +15,7 @@ survey weights, so human and LLM electorates are matched person for person.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -243,3 +244,71 @@ def null_permutation(
         "null_permutation", "null_permutation", "thermometer", _from_scores(scores),
         table.weights, scores, replicate=replicate,
     )  # fmt: skip
+
+
+# --------------------------------------------------------------------------------------
+# Tie handling (DECISIONS.md G21): a robustness check for H1
+# --------------------------------------------------------------------------------------
+
+TIE_MODES = ("as_is", "break_random", "drop_flat")
+
+
+def flat_ballots(scores: np.ndarray) -> np.ndarray:
+    """Rows of a score matrix where every rated candidate has the same score (and at
+    least one is rated). Such a ballot is single-peaked on every axis."""
+    rated = ~np.isnan(scores)
+    lo = np.where(rated, scores, np.inf).min(axis=1)
+    hi = np.where(rated, scores, -np.inf).max(axis=1)
+    return rated.any(axis=1) & (lo == hi)
+
+
+def with_ties(table: BallotTable, mode: str, seed: int = 0) -> tuple[BallotTable, dict]:
+    """The ballot table with ties handled as ``mode`` says, and a short report.
+
+    - ``as_is``: unchanged.
+    - ``break_random``: every tie in every ballot (human thermometers, LLM thermometers,
+      LLM rankings) is broken uniformly at random, by adding noise smaller than any gap
+      between distinct values (scores are whole numbers, ranks multiples of 1/4). This
+      turns indifference into noise, so it biases *against* H1. Missing candidates stay
+      missing. One seeded draw.
+    - ``drop_flat``: respondents whose thermometer ballot is flat in the human
+      electorate or in any model's are left out of every electorate, so all electorates
+      still cover the same people.
+    """
+    if mode not in TIE_MODES:
+        raise ValueError(f"ties must be one of {TIE_MODES}, not {mode!r}")
+    flat = {"human": int(flat_ballots(table.human).sum())}
+    flat.update({m: int(flat_ballots(s).sum()) for m, s in table.llm_scores.items()})
+    report: dict = {"ties": mode, "flat_thermometer_ballots": flat, "n_before": table.n}
+    if mode == "as_is":
+        return table, {**report, "n_after": table.n}
+    if mode == "break_random":
+        rng = np.random.default_rng(seed)
+
+        def jitter(a: np.ndarray) -> np.ndarray:
+            return a + rng.uniform(0.0, 1e-3, size=a.shape)  # NaN stays NaN
+
+        out = dataclasses.replace(
+            table,
+            human=jitter(table.human),
+            llm_scores={m: jitter(s) for m, s in table.llm_scores.items()},
+            llm_ranks={m: jitter(r) for m, r in table.llm_ranks.items()},
+        )
+        return out, {**report, "n_after": out.n}
+    drop = flat_ballots(table.human)
+    for s in table.llm_scores.values():
+        drop |= flat_ballots(s)
+    keep = ~drop
+    out = dataclasses.replace(
+        table,
+        respondent_ids=table.respondent_ids[keep],
+        weights=table.weights[keep],
+        strata=table.strata[keep],
+        human=table.human[keep],
+        llm_scores={m: s[keep] for m, s in table.llm_scores.items()},
+        llm_ranks={m: r[keep] for m, r in table.llm_ranks.items()},
+        personas=table.personas[keep].reset_index(drop=True)
+        if len(table.personas) == table.n
+        else table.personas,
+    )
+    return out, {**report, "n_after": out.n}

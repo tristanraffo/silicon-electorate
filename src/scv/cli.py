@@ -87,6 +87,15 @@ def analyze(
             "cancels position bias. Writes to results/metrics/<run_id>__ranking_combined/.",
         ),
     ] = "greedy",
+    ties: Annotated[
+        str,
+        typer.Option(
+            "--ties",
+            help="'as_is' (default), 'break_random' (break every tie at random) or "
+            "'drop_flat' (leave out respondents with a flat thermometer ballot anywhere). "
+            "Writes to results/metrics/<run_id>__ties_<mode>/.",
+        ),
+    ] = "as_is",
 ) -> None:
     """Compute every metric for a run: summary.csv, Parquet tables and three figures."""
     from scv.analysis import AnalysisOptions, analyze_run
@@ -100,6 +109,7 @@ def analyze(
             figures=not no_figures,
             exclude_ranking=tuple(exclude_ranking or ()),
             ranking_ballot=ranking_ballot,
+            ties=ties,
         )
     except (anes.ConfigError, ValueError) as e:
         typer.echo(f"ERROR: {e}", err=True)

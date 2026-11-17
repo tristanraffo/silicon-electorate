@@ -609,3 +609,55 @@ def test_trial_ranking_formats_parse_and_run_configs_can_select_them():
         text = call.prompt.messages[-1][1]
         assert marker in text and "{" not in text and "{" not in call.repair
         assert all(w not in text.lower() for w in FORBIDDEN_WORDS)
+
+
+class SometimesUnreadable(Backend):
+    """Pairwise answers readable except for one respondent's pair in one order."""
+
+    def info(self):
+        return {"model_id": "u", "revision": None, "dtype": None, "backend": "vllm"}
+
+    def generate(self, prompts, *, temperature, max_tokens, n, seed):
+        return [["50"] * n for _ in prompts]
+
+    def next_token_logprobs(self, prompts, candidates):
+        out = []
+        for p in prompts:
+            text = p.messages[-1][1]
+            if "I am 31" in text and "1: Ann Lee" in text and "Bo Chen" in text:
+                out.append(None)
+            else:
+                first = text.split("1: ")[1].split("\n")[0]
+                good = math.log(0.8) if first < "Bo" else math.log(0.3)
+                out.append({"1": good, "2": math.log(1 - math.exp(good))})
+        return out
+
+
+def test_unreadable_pairwise_answers_are_failed_calls_and_left_out_of_h4():
+    from scv.analysis import voter_coherence
+
+    cands = ("Ann Lee", "Bo Chen", "Cy Diaz")
+    cfg = ElicitConfig(election="e", candidates=cands, question_text="Q", modes=("pairwise",))
+    people = [Respondent(f"r{i}", f"I am {30 + i} years old.") for i in range(3)]
+    calls = run_elicitation(cfg, people, SometimesUnreadable(), "m")
+    bad = ~calls["parse_ok"]
+    assert bad.sum() == 1 and calls.loc[bad, "respondent_id"].item() == "r1"
+    assert calls.loc[bad, "parsed"].item() == "null" and calls.loc[bad, "logprobs"].isna().all()
+
+    table = pairwise_table(calls)
+    r1 = table[table["respondent_id"] == "r1"]
+    missing = r1["p_a_over_b"].isna()
+    assert missing.sum() == 1 and set(r1[missing][["a", "b"]].iloc[0]) == {"Ann Lee", "Bo Chen"}
+    assert table[table["respondent_id"] != "r1"]["p_a_over_b"].notna().all()
+
+    coh = voter_coherence(calls, cands).set_index("respondent_id")
+    assert np.isnan(coh.loc["r1", "wst_violation_share"])  # its only triple is incomplete
+    assert coh.drop("r1")["wst_violation_share"].notna().all()
+
+    # a log from before this change: the unreadable answer was stored as exactly 50/50
+    old = calls.copy()
+    old.loc[bad, ["parsed", "parse_ok"]] = [json.dumps(0.5), True]
+    assert pairwise_table(old).equals(table)
+    # the mock backend's exact 50/50 answers (tied utilities) are real and are kept
+    mock = old.assign(backend="mock")
+    assert pairwise_table(mock)["p_a_over_b"].notna().all()

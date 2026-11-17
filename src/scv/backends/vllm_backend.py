@@ -32,6 +32,12 @@ LOGPROBS_K = 20
 #: hundred tokens; a longer one is rejected by vLLM with an error, never truncated.
 DEFAULT_MAX_MODEL_LEN = 4096
 
+#: A pairwise batch stops the run only if more than this share of its answers cannot be
+#: read. Occasional refusals (Gemma: about 2% of answers, up to 6% of a batch) are logged
+#: as failed calls; a model that never answers with a label (Mistral before the
+#: leading-space fix: 100%) stops the run.
+MAX_UNREADABLE_SHARE = 0.5
+
 
 def _is_oom(e: BaseException) -> bool:
     return "out of memory" in str(e).lower() or type(e).__name__ == "OutOfMemoryError"
@@ -62,6 +68,7 @@ class VLLMBackend(Backend):
         self.dtype = dtype or "bfloat16"
         self.missing_label_count = 0  # pairwise calls where a label fell outside the top k
         self.leading_space_count = 0  # pairwise calls read one token later (see below)
+        self.unreadable_count = 0  # pairwise calls logged as failed: no label in sight
         engine_kwargs.setdefault("max_model_len", DEFAULT_MAX_MODEL_LEN)
         try:
             if tokenizer is None:
@@ -165,7 +172,7 @@ class VLLMBackend(Backend):
 
     def next_token_logprobs(
         self, prompts: list[ChatPrompt], candidates: list[str]
-    ) -> list[dict[str, float]]:
+    ) -> list[dict[str, float] | None]:
         if not prompts:
             return []
         completion = prompts[0].is_completion
@@ -192,19 +199,27 @@ class VLLMBackend(Backend):
             for (i, _), top in zip(redo, again, strict=True):
                 tops[i] = top
 
-        result, unread = [], 0
+        result: list[dict[str, float] | None] = []
+        unread = 0
         for top in tops:
-            floor = min(top.values()) if top else 0.0
+            if not any(tid in top for tid in label_ids):
+                # No label in sight: the model is answering with something else (often a
+                # refusal). Recorded as a failed call, never as a 50/50 choice.
+                unread += 1
+                result.append(None)
+                continue
+            floor = min(top.values())
             raw = []
             for tid in label_ids:
                 if tid not in top:
                     # Outside the top k: its true log-prob is at most the k-th best.
                     self.missing_label_count += 1
                 raw.append(top.get(tid, floor))
-            unread += all(tid not in top for tid in label_ids)
             result.append(dict(zip(candidates, _log_normalise(raw), strict=True)))
-        if unread > max(1, len(prompts) // 20):
-            # Recording these as 50/50 would look like data. Stop instead.
+        self.unreadable_count += unread
+        if unread > len(prompts) * MAX_UNREADABLE_SHARE:
+            # Systematic, not occasional: the prompt or the tokenisation does not work for
+            # this model, and the run should stop rather than log failures.
             raise BackendError(
                 f"{self.hf_id!r}: no answer label ({', '.join(candidates)}) among the top "
                 f"{LOGPROBS_K} next tokens for {unread} of {len(prompts)} pairwise prompts. "
@@ -213,7 +228,12 @@ class VLLMBackend(Backend):
             )
         if unread:
             logger.warning(
-                "no answer label in the top %d tokens for %d call(s)", LOGPROBS_K, unread
+                "%s: %d of %d pairwise answers unreadable (no label in the top %d); "
+                "logged as failed calls",
+                self.hf_id,
+                unread,
+                len(prompts),
+                LOGPROBS_K,
             )
         return result
 

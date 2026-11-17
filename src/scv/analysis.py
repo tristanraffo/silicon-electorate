@@ -35,6 +35,7 @@ from scv.electorates import (
     human_electorate,
     null_ic,
     null_permutation,
+    with_ties,
 )
 from scv.elicit import derive_seed
 
@@ -851,15 +852,21 @@ SETTINGS_FILE = "analysis_settings.json"
 
 
 def variant_id(
-    run_id: str, exclude_ranking: Sequence[str] = (), ranking_ballot: str = "greedy"
+    run_id: str,
+    exclude_ranking: Sequence[str] = (),
+    ranking_ballot: str = "greedy",
+    ties: str = "as_is",
 ) -> str:
     """Name of an analysis variant: the run id, plus the ranking ballot if it is not the
-    greedy one, plus the models whose ranking ballots were left out."""
+    greedy one, plus the models whose ranking ballots were left out, plus the tie
+    handling if it is not ``as_is``."""
     name = run_id
     if ranking_ballot != "greedy":
         name += f"__ranking_{ranking_ballot}"
     if exclude_ranking:
         name += f"__ranking_without_{'_'.join(sorted(exclude_ranking))}"
+    if ties != "as_is":
+        name += f"__ties_{ties}"
     return name
 
 
@@ -869,6 +876,7 @@ def analyze_run(
     figures: bool = True,
     exclude_ranking: Sequence[str] = (),
     ranking_ballot: str = "greedy",
+    ties: str = "as_is",
 ) -> Path:
     """Analyse one finished (or partly finished) run and write
     ``results/metrics/<run_id>/``: the Parquet tables, ``summary.csv`` and the figures.
@@ -880,6 +888,9 @@ def analyze_run(
     ``exclude_ranking`` is a sensitivity analysis: the named models' *ranking* ballots
     are left out, so they have no ranking electorate, no ranking matched comparison, and
     no part in the mixed-model ranking electorate. Their thermometer ballots are kept.
+    ``ties`` (``as_is``, ``break_random``, ``drop_flat``) is a robustness check for flat
+    and tied ballots; see ``electorates.with_ties``.
+
     ``ranking_ballot="combined"`` uses the average of each voter's rankings instead of
     the greedy one (see ``build_ballot_table``). Either variant writes to its own folder
     (see ``variant_id``), which is also the ``run_id`` written in its tables, so the
@@ -911,7 +922,10 @@ def analyze_run(
     if exclude_ranking:
         kept = {m: r for m, r in table.llm_ranks.items() if m not in set(exclude_ranking)}
         table = dataclasses.replace(table, llm_ranks=kept)
-    label = variant_id(cfg.run_id, exclude_ranking, ranking_ballot)
+    table, tie_report = with_ties(
+        table, ties, derive_seed("ties", (opts or AnalysisOptions()).seed)
+    )
+    label = variant_id(cfg.run_id, exclude_ranking, ranking_ballot, ties)
     registry = runner.load_models(cfg.models_file)
     in_run = [m for m in cfg.models if m in table.models]
     pool = [m for m in in_run if registry.get(m, {}).get("section") == "pool"]
@@ -937,6 +951,7 @@ def analyze_run(
         "mixed_model_pool": list(pool),
         "ranking_ballot": ranking_ballot,
         "exclude_ranking": sorted(exclude_ranking),
+        **tie_report,
         **dataclasses.asdict(opts or AnalysisOptions()),
         "n_calls": int(len(calls)),
         "written": datetime.now(UTC).isoformat(timespec="seconds"),

@@ -894,3 +894,97 @@ def test_paired_differences_from_the_human_electorate(table, tables):
     # ranking-source electorates are compared with the human thermometer ballots too
     r = t[(t["source"] == "ranking") & t["metric"].str.endswith("_minus_human")]
     assert set(r["metric"]) == {"sp_deletion_share_minus_human"}
+
+
+def test_tie_handling_modes(table, noisy):
+    """`--ties break_random` keeps every strict preference and breaks every tie;
+    `--ties drop_flat` removes respondents with a flat thermometer ballot anywhere."""
+    import dataclasses
+
+    from scv.electorates import flat_ballots, with_ties
+
+    # make some ballots flat and some tied, in the human and in one model
+    human = table.human.copy()
+    human[0] = 50.0
+    human[1, :2] = 70.0
+    scores = {m: s.copy() for m, s in table.llm_scores.items()}
+    scores[MODELS[0]][2] = 40.0
+    t = dataclasses.replace(table, human=human, llm_scores=scores)
+    assert flat_ballots(np.array([[5, 5, np.nan], [1, 2, 2], [np.nan] * 3])).tolist() == [
+        True,
+        False,
+        False,
+    ]
+
+    same, rep = with_ties(t, "as_is")
+    assert same is t and rep["n_after"] == t.n and rep["flat_thermometer_ballots"]["human"] >= 1
+
+    broken, rep = with_ties(t, "break_random", seed=1)
+    assert rep["n_after"] == t.n
+    for before, after in [
+        (t.human, broken.human),
+        *zip(t.llm_scores.values(), broken.llm_scores.values(), strict=True),
+    ]:
+        assert np.array_equal(np.isnan(before), np.isnan(after))  # missing stays missing
+        for b, a in zip(before, after, strict=True):
+            ok = ~np.isnan(b)
+            b, a = b[ok], a[ok]
+            assert len(set(a)) == len(a)  # no ties left
+            i, j = np.triu_indices(len(b), 1)
+            strict = b[i] != b[j]
+            assert (np.sign(a[i] - a[j])[strict] == np.sign(b[i] - b[j])[strict]).all()
+    again, _ = with_ties(t, "break_random", seed=1)
+    assert np.array_equal(again.human, broken.human, equal_nan=True)  # seeded
+
+    dropped, rep = with_ties(t, "drop_flat")
+    gone = flat_ballots(t.human)
+    for s in t.llm_scores.values():
+        gone |= flat_ballots(s)
+    assert rep["n_after"] == dropped.n == t.n - gone.sum() and gone[[0, 2]].all() and not gone[1]
+    assert list(dropped.respondent_ids) == list(t.respondent_ids[~gone])
+    assert len(dropped.weights) == len(dropped.strata) == dropped.n
+    assert all(len(r) == dropped.n for r in dropped.llm_ranks.values())
+    assert not flat_ballots(dropped.human).any()
+    with pytest.raises(ValueError, match="ties must be"):
+        with_ties(t, "ignore")
+
+    small = AnalysisOptions(bootstrap=10, draws=10, replicates=2, sizes=(11,), seed=3)
+    out = analysis.analyze_run(noisy, small, figures=False, ties="drop_flat")
+    assert out.name == f"{noisy.run_id}__ties_drop_flat"
+    import json
+
+    s = json.loads((out / analysis.SETTINGS_FILE).read_text())
+    assert s["ties"] == "drop_flat" and s["n_after"] <= s["n_before"] == 150
+    assert analysis.variant_id("r", ["m"], "combined", "break_random") == (
+        "r__ranking_combined__ranking_without_m__ties_break_random"
+    )
+
+
+def test_breaking_ties_at_random_removes_the_advantage_of_flat_ballots():
+    # A flat ballot is single-peaked on every axis. Electorate: impartial culture plus a
+    # large share of flat ballots. As is, the flat ballots lower the deletion share;
+    # broken at random they behave like impartial culture again.
+    from scv.electorates import BallotTable, with_ties
+
+    rng = np.random.default_rng(0)
+    n, m = 2000, 4
+    ic = np.argsort(rng.random((n, m)), axis=1).astype(float) * 20
+    flat = np.full((n, m), 50.0)
+    scores = np.where((np.arange(n) < n // 2)[:, None], flat, ic)
+    cands = tuple("ABCD")
+    t = BallotTable(
+        "e", cands, np.array([str(i) for i in range(n)]), np.ones(n),
+        np.full(n, "", dtype=object), ic, {"model": scores}, {},
+    )  # fmt: skip
+
+    def deletion(tab):
+        from scv.electorates import homogeneous
+
+        e = homogeneous(tab, "model")
+        return domains.sp_deletion_share(e.profile(cands))
+
+    as_is = deletion(t)
+    broken = deletion(with_ties(t, "break_random", seed=2)[0])
+    pure_ic = domains.sp_deletion_share(Profile.from_scores(ic, cands))
+    assert as_is < 0.6 * pure_ic
+    assert broken == pytest.approx(pure_ic, abs=0.05)

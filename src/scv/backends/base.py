@@ -99,9 +99,10 @@ class Backend(ABC):
     @abstractmethod
     def next_token_logprobs(
         self, prompts: list[ChatPrompt], candidates: list[str]
-    ) -> list[dict[str, float]]:
+    ) -> list[dict[str, float] | None]:
         """Log-probability of each candidate label as the next token, renormalised over
-        the candidate labels only."""
+        the candidate labels only. ``None`` for a prompt whose answer cannot be read
+        (no label among the next tokens the backend can see)."""
 
     @abstractmethod
     def info(self) -> dict[str, Any]:

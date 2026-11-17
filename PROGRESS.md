@@ -8,7 +8,7 @@ Read `SPEC.md` first. This file is enough to resume from a fresh session.
 uv sync && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
-All three must be green (239 tests, about 45 s; no model is loaded). The real-model
+All three must be green (244 tests, about 45 s; no model is loaded). The real-model
 smoke test is opt-in:
 
 ```bash
@@ -149,9 +149,17 @@ of answers are exactly 50/50); greedy ranking parse rate 97.7–100% except Mist
    `analysis_settings.json`; rerun `scv analyze` to get them.
 5. Re-run the analyses at full settings (drop `--replicates 10`; B = 1,000, R = 50) once
    the choices in step 3 are settled. Timing at full scale is still unmeasured.
-6. Full-scale runs (every respondent): configs are in `configs/runs/full/` and the
-   commands, time estimates (about 5.5 GPU-hours for all three) and GPU advice are in
-   `FULL_RUNS.md`. Not run yet.
+0. **Before reading any result: ties (G20).** Mistral and Qwen give many completely flat
+   thermometer ballots, which make the H1 measures look more monocultural mechanically.
+   Built (G21): rerun `scv analyze` with `--ties break_random` and `--ties drop_flat`
+   for each full run (done 2026-11-17 for all three), then
+   `uv run python scripts/h1_table.py anes2024_ts_full_v4 anes2016_ts_full_v4
+   anes2016_pilot_full_v4` and read H1 only where the `robust` column is True.
+6. Full-scale runs (every respondent): configs in `configs/runs/full/`, commands in
+   `FULL_RUNS.md`. As of 2026-11-17 the 2024 and 2016 Time Series runs are complete and
+   on the Mac; the 2016 Pilot run stopped with 47,538 calls left (G19, now fixed) and
+   needs resuming with the same command after copying the code up. Rerun `scv analyze`
+   for every run afterwards: H4 changed (G19).
 7. Not yet run at all: the training-stage models in `configs/models/models.yaml` (the
    OLMo checkpoints, including a base model that uses the plain-completion prompts, which
    have never met a GPU), and candidate-subset runs for H2. Both are new `run_id`s with

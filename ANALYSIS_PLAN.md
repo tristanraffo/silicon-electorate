@@ -180,6 +180,13 @@ same H1 outcomes across checkpoints, and call it exploratory.
    any way of breaking the ties is. If humans have many more (or fewer) ties than a
    model, part of a `sp_deletion_share` gap is an artefact of that. Use
    `sp_plateau_deletion_share` and `vr_mean_min_violation` as cross-checks.
+   **Done on the full runs (G20): this check failed** for Mistral and Qwen, which give
+   many completely flat ballots. Rerun with `--ties break_random` and
+   `--ties drop_flat` (G21) and treat an H1 gap as robust only if it has the same sign
+   in the default and both tie variants.
+   `uv run python scripts/h1_table.py <run_id> ...` lines these rows up, with a
+   `robust` column for that rule (`--weighting unweighted`, `--source ranking` for the
+   other views).
 3. **The nulls behave:** `null_ic` should have a high deletion share and
    `mean_kendall_tau` near 0.5; `null_permutation` should sit between it and `human`.
 4. **Weighted and unweighted agree in sign.**
