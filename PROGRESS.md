@@ -8,7 +8,7 @@ Read `SPEC.md` first. This file is enough to resume from a fresh session.
 uv sync && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
-All three must be green (244 tests, about 45 s; no model is loaded). The real-model
+All three must be green (245 tests, about 45 s; no model is loaded). The real-model
 smoke test is opt-in:
 
 ```bash
@@ -142,7 +142,9 @@ of answers are exactly 50/50); greedy ranking parse rate 97.7–100% except Mist
    wording unverified for the two Time Series); G4, G6, G7, G8, G10, G11, G13, G14, G15
    (GPU runs). Changing a prompt, a persona label or a candidate set means a new
    `run_id` and a rerun.
-4. Read `ANALYSIS_PLAN.md` (which rows answer which hypothesis, how to read each metric,
+4. `uv run scv report anes2024_ts_full_v4 anes2016_ts_full_v4 anes2016_pilot_full_v4`
+   builds `results/report/index.html` with every result (G22); rebuild after any new
+   analysis. Read `ANALYSIS_PLAN.md` (which rows answer which hypothesis, how to read each metric,
    checks to make first) and accept or edit its proposed decision rules. Then look at
    the results: `notebooks/01_results.ipynb` reads `results/metrics/*/`. Analyses made
    before commit "paired differences" lack the `*_minus_human` rows and

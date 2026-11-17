@@ -120,6 +120,28 @@ def analyze(
             typer.echo(f"  {path.relative_to(out)}")
 
 
+@app.command()
+def report(
+    run_ids: Annotated[list[str], typer.Argument(help="Run ids to include, in page order.")],
+    out: Annotated[Path, typer.Option(help="HTML file to write.")] = Path(
+        "results/report/index.html"
+    ),
+    results: Annotated[Path, typer.Option(help="Results folder.")] = Path("results"),
+    no_calls: Annotated[
+        bool, typer.Option("--no-calls", help="Skip the call logs (no parse-rate table).")
+    ] = False,
+) -> None:
+    """One self-contained HTML page with every analysed result of the given runs."""
+    from scv.report import write_report
+
+    try:
+        path = write_report(run_ids, out, results, with_calls=not no_calls)
+    except ValueError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"wrote {path} ({path.stat().st_size / 1e6:.1f} MB)")
+
+
 data_app = typer.Typer(no_args_is_help=True, help="ANES data: check configs, build tables.")
 app.add_typer(data_app, name="data")
 

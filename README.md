@@ -42,6 +42,7 @@ uv run pytest -m hf -s
 | `uv run scv analyze --config <run.yaml>` | Writes `results/metrics/<run_id>/`: `summary.csv`, Parquet tables and three figures. Options: `--bootstrap`, `--draws`, `--replicates`, `--seed`, `--no-figures`. The options used are saved in `analysis_settings.json`. |
 | `… --ranking-ballot combined` | The same, with each voter's ranking ballot averaged over their four rankings instead of the greedy one alone (cancels position bias). Writes to `results/metrics/<run_id>__ranking_combined/`. |
 | `… --ties break_random` / `--ties drop_flat` | Tie-robustness checks: break every tie at random, or leave out respondents with a flat thermometer ballot anywhere. Writes to `results/metrics/<run_id>__ties_<mode>/`. |
+| `uv run scv report <run_id> ...` | One self-contained HTML page with every analysed result of the given runs (all analysis variants found), switches for weighting and ballot source, data-quality checks and a filterable table of every number. Writes `results/report/index.html`; open it in any browser. |
 | `… --exclude-ranking <model>` | Sensitivity analysis: the same, with that model's ranking ballots left out. Writes to `results/metrics/<run_id>__ranking_without_<model>/`. |
 
 `<election>` is an id from `configs/elections/` or a path to a YAML file.

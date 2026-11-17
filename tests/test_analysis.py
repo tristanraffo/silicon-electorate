@@ -988,3 +988,45 @@ def test_breaking_ties_at_random_removes_the_advantage_of_flat_ballots():
     pure_ic = domains.sp_deletion_share(Profile.from_scores(ic, cands))
     assert as_is < 0.6 * pure_ic
     assert broken == pytest.approx(pure_ic, abs=0.05)
+
+
+def test_scv_report_builds_one_self_contained_page(noisy, root, tmp_path):
+    """`scv report`: one HTML file, no external resources, a copy of every chart for each
+    switch position, the tie variants when they exist, and every summary row."""
+    from scv.report import BALLOTS, WEIGHTINGS
+
+    small = AnalysisOptions(bootstrap=10, draws=10, replicates=2, sizes=(11, 25), seed=3)
+    analysis.analyze_run(noisy, small, figures=False)
+    analysis.analyze_run(noisy, small, figures=False, ties="drop_flat")
+    analysis.analyze_run(noisy, small, figures=False, ranking_ballot="combined")
+    path = tmp_path / "report.html"
+    out = CliRunner().invoke(
+        app,
+        ["report", noisy.run_id, "--out", str(path), "--results", noisy.results_dir],
+    )
+    assert out.exit_code == 0, out.output
+    page = path.read_text()
+    assert page.startswith("<!doctype html>") and page.count("<section") == 9
+    assert "http://" not in page and "https://" not in page and "<script src" not in page
+    for w in WEIGHTINGS:
+        for b in BALLOTS:
+            assert f'data-w="{w}" data-b="{b}"' in page
+    h1 = page.split('id="h1"')[1].split('id="levels"')[0]
+    assert "Flat ballots dropped" in h1  # the variant that was analysed is drawn
+    assert "Ties broken at random:" not in h1  # the one that was not, is not
+    assert "sp_deletion_share_minus_human" in page  # the all-numbers table
+    assert page.count("<svg") > 50 and "<title>" in page  # charts with hover text
+    assert "No conclusions are drawn on this page." in page
+
+    bad = CliRunner().invoke(
+        app,
+        [
+            "report",
+            "no_such_run",
+            "--out",
+            str(tmp_path / "x.html"),
+            "--results",
+            noisy.results_dir,
+        ],
+    )
+    assert bad.exit_code == 1 and "no analysis" in bad.output
